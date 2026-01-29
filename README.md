@@ -1,6 +1,12 @@
 # wopr-plugin-telegram
 
+[![npm version](https://img.shields.io/npm/v/wopr-plugin-telegram.svg)](https://www.npmjs.com/package/wopr-plugin-telegram)
+[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
+[![WOPR](https://img.shields.io/badge/WOPR-Plugin-blue)](https://github.com/TSavo/wopr)
+
 Telegram integration for [WOPR](https://github.com/TSavo/wopr) using [Grammy](https://grammy.dev/).
+
+> Part of the [WOPR](https://github.com/TSavo/wopr) ecosystem - Self-sovereign AI session management over P2P.
 
 ## Features
 
