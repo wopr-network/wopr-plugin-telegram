@@ -1,0 +1,37 @@
+{
+  "name": "wopr-plugin-telegram",
+  "version": "1.0.0",
+  "description": "Telegram plugin for WOPR using Grammy",
+  "main": "dist/index.js",
+  "types": "dist/index.d.ts",
+  "scripts": {
+    "build": "tsc",
+    "test": "jest",
+    "lint": "eslint src/**/*.ts",
+    "prepublishOnly": "npm run build"
+  },
+  "keywords": [
+    "wopr",
+    "wopr-plugin",
+    "telegram",
+    "grammy",
+    "bot"
+  ],
+  "author": "TSavo",
+  "license": "MIT",
+  "peerDependencies": {
+    "wopr": "^2.0.0"
+  },
+  "dependencies": {
+    "grammy": "^1.21.1",
+    "winston": "^3.11.0"
+  },
+  "devDependencies": {
+    "@types/node": "^20.0.0",
+    "typescript": "^5.0.0"
+  },
+  "files": [
+    "dist/**/*",
+    "IDENTITY.md"
+  ]
+}
