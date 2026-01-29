@@ -1,0 +1,83 @@
+{
+  "_comment": "WOPR Telegram Plugin Configuration - Webhook Mode",
+  "description": "Production webhook configuration for low-latency and scalability",
+  
+  "channels": {
+    "telegram": {
+      "_comment": "Authentication - use one of these methods:",
+      "botToken": "${TELEGRAM_BOT_TOKEN}",
+      "_tokenFile": "/path/to/token.txt",
+      "_envVar": "TELEGRAM_BOT_TOKEN environment variable",
+      
+      "_comment_dm": "Direct Message Settings - Restricted for production",
+      "dmPolicy": "allowlist",
+      "_dmPolicyOptions": [
+        "pairing - All DMs allowed, pairing handled by WOPR",
+        "allowlist - Only users in allowFrom can DM",
+        "open - Anyone can DM",
+        "disabled - DMs ignored"
+      ],
+      
+      "allowFrom": [
+        "123456789"
+      ],
+      "_allowFrom_note": "List of Telegram user IDs or usernames allowed to DM",
+      
+      "_comment_group": "Group Settings",
+      "groupPolicy": "open",
+      "_groupPolicy_note": "Open allows anyone in groups (groups are invite-only anyway)",
+      
+      "groupAllowFrom": [],
+      "_groupAllowFrom_note": "Not needed when groupPolicy is 'open'",
+      
+      "_comment_media": "Media Handling",
+      "mediaMaxMb": 10,
+      "_mediaMaxMb_note": "Higher limit for production (1-20 MB)",
+      
+      "_comment_performance": "Performance Settings",
+      "timeoutSeconds": 60,
+      "_timeout_note": "Longer timeout for production workloads",
+      
+      "_comment_webhook": "Webhook Configuration (REQUIRED for webhook mode)",
+      "webhookUrl": "https://bot.yourdomain.com/webhook",
+      "_webhookUrl_note": "Must be HTTPS with valid SSL certificate",
+      
+      "webhookPort": 3000,
+      "_webhookPort_note": "Port for webhook server (usually behind reverse proxy)",
+      
+      "_webhook_requirements": {
+        "url": "Must be HTTPS",
+        "certificate": "Must be valid (not self-signed)",
+        "domain": "Must be publicly accessible",
+        "ports": "443, 80, 88, or 8443 recommended",
+        "reverse_proxy": "Recommended: Nginx, Caddy, or Traefik"
+      }
+    }
+  },
+  
+  "_deployment_notes": {
+    "step1": "Set TELEGRAM_BOT_TOKEN environment variable",
+    "step2": "Ensure domain has valid SSL certificate (Let's Encrypt)",
+    "step3": "Configure reverse proxy (see docs/DEPLOYMENT.md)",
+    "step4": "Open firewall port if needed",
+    "step5": "Start WOPR daemon: wopr daemon start",
+    "step6": "Verify webhook: curl https://api.telegram.org/bot<TOKEN>/getWebhookInfo"
+  },
+  
+  "_example_nginx": {
+    "server": {
+      "listen": "443 ssl http2",
+      "server_name": "bot.yourdomain.com",
+      "location": {
+        "path": "/webhook",
+        "proxy_pass": "http://localhost:3000",
+        "proxy_headers": {
+          "Host": "$host",
+          "X-Real-IP": "$remote_addr",
+          "X-Forwarded-For": "$proxy_add_x_forwarded_for",
+          "X-Forwarded-Proto": "$scheme"
+        }
+      }
+    }
+  }
+}

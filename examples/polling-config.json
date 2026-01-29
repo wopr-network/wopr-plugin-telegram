@@ -1,0 +1,52 @@
+{
+  "_comment": "WOPR Telegram Plugin Configuration - Polling Mode",
+  "description": "Simple polling configuration for development and small deployments",
+  
+  "channels": {
+    "telegram": {
+      "_comment": "Authentication - use one of these methods:",
+      "botToken": "${TELEGRAM_BOT_TOKEN}",
+      "_tokenFile": "/path/to/token.txt",
+      "_envVar": "TELEGRAM_BOT_TOKEN environment variable",
+      
+      "_comment_dm": "Direct Message Settings",
+      "dmPolicy": "pairing",
+      "_dmPolicyOptions": [
+        "pairing - All DMs allowed, pairing handled by WOPR",
+        "allowlist - Only users in allowFrom can DM",
+        "open - Anyone can DM",
+        "disabled - DMs ignored"
+      ],
+      
+      "allowFrom": [
+        "123456789",
+        "@yourusername"
+      ],
+      
+      "_comment_group": "Group Settings",
+      "groupPolicy": "allowlist",
+      "_groupPolicyOptions": [
+        "allowlist - Only users in groupAllowFrom can trigger",
+        "open - Anyone in groups can trigger",
+        "disabled - Group messages ignored"
+      ],
+      
+      "groupAllowFrom": [
+        "123456789",
+        "*"
+      ],
+      
+      "_comment_media": "Media Handling",
+      "mediaMaxMb": 5,
+      "_mediaMaxMb_note": "Maximum file size in MB (1-20)",
+      
+      "_comment_performance": "Performance Settings",
+      "timeoutSeconds": 30,
+      "_timeout_note": "API timeout for Telegram requests"
+      
+      "_comment_webhook": "Webhook Settings (disabled in polling mode)",
+      "_webhookUrl": "https://yourdomain.com/webhook",
+      "_webhookPort": 3000
+    }
+  }
+}

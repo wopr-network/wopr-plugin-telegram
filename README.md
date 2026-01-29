@@ -3,148 +3,293 @@
 [![npm version](https://img.shields.io/npm/v/wopr-plugin-telegram.svg)](https://www.npmjs.com/package/wopr-plugin-telegram)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
 [![WOPR](https://img.shields.io/badge/WOPR-Plugin-blue)](https://github.com/TSavo/wopr)
+[![Grammy](https://img.shields.io/badge/Grammy-1.21+-blue)](https://grammy.dev/)
 
-Telegram integration for [WOPR](https://github.com/TSavo/wopr) using [Grammy](https://grammy.dev/).
+🤖 **Telegram Bot Integration for [WOPR](https://github.com/TSavo/wopr)**
 
 > Part of the [WOPR](https://github.com/TSavo/wopr) ecosystem - Self-sovereign AI session management over P2P.
 
-## Features
+Connect your WOPR AI agents to Telegram with this powerful, feature-rich plugin. Built on the modern [Grammy](https://grammy.dev/) framework for reliability and type safety.
 
-- ✈️ **Grammy Library** - Modern, type-safe Telegram Bot API
-- 👥 **Group Support** - Works in groups, supergroups, channels
-- 🧵 **Threads** - Forum topics and reply threading
-- 🔒 **DM Policies** - Control who can message the bot
-- 👀 **Identity Reactions** - Reacts with agent's emoji
-- 📎 **Media** - Photo/document support with captions
-- 🔄 **Auto-retry** - Rate limit handling
-- ✂️ **Auto-chunking** - Splits long messages automatically
+---
 
-## Prerequisites
+## ✨ Features
 
-### 1. Create a Telegram Bot
+| Feature | Description |
+|---------|-------------|
+| ✈️ **Grammy Framework** | Modern, type-safe Telegram Bot API with auto-retry |
+| 👥 **Group Support** | Full support for groups, supergroups, and channels |
+| 🧵 **Forum Topics** | Thread-aware messaging in forum supergroups |
+| 🔒 **Flexible Policies** | Granular DM and group access controls |
+| 👀 **Identity Reactions** | Reacts with your agent's custom emoji |
+| 📎 **Rich Media** | Photos, documents, captions, and more |
+| 🔄 **Auto-Retry** | Intelligent rate limit handling with backoff |
+| ✂️ **Smart Chunking** | Automatic message splitting for long responses |
+| 🌐 **Webhook & Polling** | Choose your preferred update method |
+| 📊 **Winston Logging** | Structured logging with configurable levels |
 
-1. Open Telegram and message [@BotFather](https://t.me/botfather)
-2. Run `/newbot` and follow instructions
-3. **Copy the bot token** (looks like `123456:ABC-DEF...`)
-4. (Optional) Set bot name, description, avatar
+---
 
-### 2. Get Your User ID
+## 📋 Prerequisites
 
-Message [@userinfobot](https://t.me/userinfobot) to get your Telegram user ID.
+### Step 1: Create a Telegram Bot with @BotFather
 
-## Installation
+1. **Open Telegram** and search for [@BotFather](https://t.me/botfather)
+2. **Start a conversation** and send `/newbot`
+3. **Follow the prompts:**
+   - Enter a name for your bot (e.g., "My WOPR Assistant")
+   - Enter a username (must end in `bot`, e.g., `mywopr_bot`)
+4. **Copy your bot token** (looks like `123456789:ABCdefGHIjklMNOpqrSTUvwxyz`)
+5. **Save it securely** - you'll only see it once!
+
+**Optional but recommended:**
+- `/setdescription` - Add a description
+- `/setabouttext` - Set about text  
+- `/setuserpic` - Upload avatar
+- `/setcommands` - Configure command menu
+
+### Step 2: Get Your Telegram User ID
+
+Message [@userinfobot](https://t.me/userinfobot) and it will reply with your user ID.
+
+---
+
+## 🚀 Quick Start
+
+### Via WOPR CLI (Recommended)
 
 ```bash
+# Add the Telegram channel
 wopr channels add telegram
+
+# Interactive configuration
+wopr configure --plugin telegram
 ```
 
-Or manually:
+### Manual Installation
+
 ```bash
 npm install wopr-plugin-telegram
 ```
 
-## Configuration
+### Minimal Configuration
 
 ```yaml
 # ~/.wopr/config.yaml
 channels:
   telegram:
-    # Required - Bot token from @BotFather
-    botToken: "123456:ABC..."
-    # OR use environment variable: TELEGRAM_BOT_TOKEN
-    
-    # Optional
-    dmPolicy: "pairing"           # DM handling: allowlist, pairing, open, disabled
-    allowFrom: []                 # Allowed user IDs for DMs
-    groupPolicy: "allowlist"      # Group handling
-    groupAllowFrom: []            # Allowed senders in groups
-    mediaMaxMb: 5                 # Max attachment size
-    timeoutSeconds: 30            # API timeout
+    botToken: "123456:ABC..."  # From @BotFather
 ```
 
-## How It Works
-
-1. **Bot Token** - Authenticates with Telegram Bot API
-2. **Long Polling** - Receives messages in real-time
-3. **Mention Detection** - In groups, only responds to @mentions
-4. **Reply Threading** - Replies to original message
-5. **HTML Formatting** - Supports formatting in responses
-
-## Commands
-
-| Command | Description |
-|---------|-------------|
-| `wopr configure --plugin telegram` | Configure bot token |
-| `@BotName message` | Mention bot in groups |
-| Reply to bot | Continue conversation |
-
-## Architecture
-
-```
-┌─────────────┐      HTTP (Bot API)     ┌─────────────┐
-│ WOPR Plugin │ ◄─────────────────────► │   Telegram  │
-│   (Grammy)  │      Long Polling       │   Servers   │
-└─────────────┘                         └─────────────┘
-                                               │
-                                               ▼
-                                        ┌─────────────┐
-                                        │   Users     │
-                                        └─────────────┘
-```
-
-## Group Behavior
-
-- Bot only responds when **@mentioned** or when you **reply** to its messages
-- This prevents spam in busy groups
-- Bot reacts with 👀 (or your agent's emoji) to acknowledge
-
-## DM Behavior
-
-- Based on `dmPolicy`:
-  - `pairing` - All DMs allowed, pairing handled separately
-  - `allowlist` - Only users in `allowFrom` can DM
-  - `open` - Anyone can DM
-  - `disabled` - DMs ignored
-
-## Troubleshooting
-
-### Bot not responding
+Or use environment variable:
 ```bash
-# Check if token is valid
+export TELEGRAM_BOT_TOKEN="123456:ABC..."
+```
+
+---
+
+## ⚙️ Configuration
+
+### Complete Configuration Options
+
+```yaml
+channels:
+  telegram:
+    # Authentication (required - one of these)
+    botToken: "123456:ABC..."           # Inline token
+    tokenFile: "/path/to/token.txt"     # Or read from file
+    # Or set TELEGRAM_BOT_TOKEN env var
+    
+    # Direct Message Policy
+    dmPolicy: "pairing"                 # Options: allowlist, pairing, open, disabled
+    allowFrom:                          # Who can DM the bot
+      - "123456789"                     # Telegram user ID
+      - "@username"                     # Telegram username
+    
+    # Group Settings
+    groupPolicy: "allowlist"            # Options: allowlist, open, disabled
+    groupAllowFrom:                     # Who can trigger in groups
+      - "123456789"
+      - "*"                             # Wildcard = anyone
+    
+    # Media & Performance
+    mediaMaxMb: 5                       # Max attachment size in MB
+    timeoutSeconds: 30                  # API timeout
+    
+    # Webhook Mode (optional - see DEPLOYMENT.md)
+    webhookUrl: "https://yourdomain.com/webhook"
+    webhookPort: 3000
+```
+
+### Policy Options Explained
+
+| Policy | Description | Use Case |
+|--------|-------------|----------|
+| **pairing** (DM default) | All DMs allowed, pairing handled by WOPR | General use |
+| **allowlist** | Only specified users can interact | Private/controlled bots |
+| **open** | Anyone can interact | Public bots |
+| **disabled** | Ignores all messages | Maintenance mode |
+
+---
+
+## 🏗️ Architecture
+
+```
+┌─────────────────┐     ┌─────────────┐     ┌─────────────┐
+│   Telegram      │────▶│   Grammy    │────▶│    WOPR     │
+│   Servers       │◄────│    Bot      │◄────│   Plugin    │
+└─────────────────┘     └─────────────┘     └─────────────┘
+        │                                           │
+        │    Long Polling or Webhook                │
+        │                                           ▼
+        │                                    ┌─────────────┐
+        └────────────────────────────────────│  AI Agent   │
+                                             │  Session    │
+                                             └─────────────┘
+```
+
+**Data Flow:**
+1. Telegram servers send updates (via polling or webhook)
+2. Grammy receives and parses the update
+3. Plugin validates sender against policies
+4. Message injected into WOPR session
+5. AI response sent back through Telegram
+
+---
+
+## 💬 Usage Guide
+
+### Direct Messages (DMs)
+
+In DMs, the bot responds to all messages (based on your `dmPolicy`):
+
+```
+User: Hello bot!
+Bot: 👋 Hello! How can I help you today?
+```
+
+### Groups & Supergroups
+
+In groups, the bot only responds when **@mentioned** or when you **reply** to its messages:
+
+```
+User: @mywopr_bot What's the weather?
+Bot: 👀 I don't have real-time weather data, but I can...
+
+User: (replying to bot) Can you explain more?
+Bot: Certainly! Let me elaborate...
+```
+
+This prevents spam in busy group chats.
+
+### Channels
+
+In channels, the bot:
+- Receives all messages (if admin)
+- Can post messages
+- Cannot use reactions (channel limitation)
+
+### Forum Topics (Threaded Groups)
+
+In forum supergroups:
+- Messages are tracked by topic
+- Replies stay in the same thread
+- Topic context is preserved
+
+---
+
+## 🔧 Polling vs Webhook
+
+| Feature | Polling | Webhook |
+|---------|---------|---------|
+| **Setup** | Zero-config | Requires HTTPS server |
+| **Latency** | 1-5 seconds | Near real-time |
+| **Server** | No server needed | Requires public URL |
+| **Firewall** | Outbound only | Inbound port needed |
+| **Scalability** | Single instance | Multiple instances |
+| **Best For** | Development, small bots | Production, high traffic |
+
+**Default:** Polling (easiest to get started)
+
+**For webhooks, see:** [docs/DEPLOYMENT.md](docs/DEPLOYMENT.md)
+
+---
+
+## 🛠️ Troubleshooting
+
+### Quick Diagnostics
+
+```bash
+# Test your bot token
 curl https://api.telegram.org/bot<YOUR_TOKEN>/getMe
 
-# Check logs
+# Should return: {"ok":true,"result":{"id":...}}
+
+# View WOPR logs
 wopr logs --follow
+
+# Check plugin status
+wopr plugin list
 ```
 
-### Groups not working
-- Make sure bot privacy mode is disabled:
-  1. Message @BotFather
-  2. Run `/mybots` → select bot → Bot Settings → Group Privacy → Turn Off
-- Bot must be admin in groups (for some features)
+### Common Issues
 
-### Rate limits
-Grammy handles rate limits automatically with exponential backoff.
+| Issue | Solution |
+|-------|----------|
+| Bot not responding | Check token validity, ensure daemon is running |
+| Groups not working | Disable privacy mode in @BotFather → Bot Settings → Group Privacy |
+| Rate limit errors | Grammy handles this automatically, just wait |
+| Media not sending | Check `mediaMaxMb` and file permissions |
+| Webhook not working | Verify HTTPS, check firewall, ensure correct port |
 
-## Environment Variables
+**For detailed troubleshooting:** [docs/TROUBLESHOOTING.md](docs/TROUBLESHOOTING.md)
 
-| Variable | Description |
+---
+
+## 🔒 Security
+
+- ✅ Bot token stored securely (config file with restricted permissions or env var)
+- ✅ DM policies prevent unauthorized access
+- ✅ Group policies control who can trigger in groups
+- ✅ No message content logged (only metadata)
+- ✅ HTTPS-only communication with Telegram API
+- ✅ Input validation on all incoming messages
+
+---
+
+## 📚 Documentation
+
+| Document | Description |
 |----------|-------------|
-| `TELEGRAM_BOT_TOKEN` | Bot token (alternative to config) |
+| [docs/CONFIGURATION.md](docs/CONFIGURATION.md) | Complete configuration reference |
+| [docs/TROUBLESHOOTING.md](docs/TROUBLESHOOTING.md) | Common issues and solutions |
+| [docs/DEPLOYMENT.md](docs/DEPLOYMENT.md) | Webhook setup, serverless deployment |
+| [examples/](examples/) | Example configurations |
 
-## Security
+---
 
-- ✅ Bot token stored in config or env
-- ✅ DM policies control access
-- ✅ No message content logged
-- ✅ HTTPS only to Telegram API
+## 🔗 WOPR Ecosystem
 
-## License
+This plugin is part of the WOPR ecosystem:
 
-MIT
+| Component | Description |
+|-----------|-------------|
+| [WOPR](https://github.com/TSavo/wopr) | Main project - Self-sovereign AI session management |
+| [wopr-plugin-discord](https://github.com/TSavo/wopr-plugin-discord) | Discord integration |
+| [wopr-plugin-slack](https://github.com/TSavo/wopr-plugin-slack) | Slack integration |
+| [wopr-plugin-whatsapp](https://github.com/TSavo/wopr-plugin-whatsapp) | WhatsApp integration |
+| [wopr-plugin-signal](https://github.com/TSavo/wopr-plugin-signal) | Signal integration |
 
-## See Also
+---
 
-- [WOPR](https://github.com/TSavo/wopr) - The main WOPR project
-- [Grammy](https://grammy.dev/) - The Telegram Bot Framework
-- [Telegram Bot API](https://core.telegram.org/bots/api) - Official API docs
+## 📝 License
+
+MIT © [TSavo](https://github.com/TSavo)
+
+---
+
+## 📖 See Also
+
+- [Grammy Documentation](https://grammy.dev/) - The Telegram Bot Framework
+- [Telegram Bot API](https://core.telegram.org/bots/api) - Official API documentation
+- [WOPR Documentation](https://github.com/TSavo/wopr#readme) - Main WOPR project
