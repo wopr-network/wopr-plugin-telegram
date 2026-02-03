@@ -2,22 +2,22 @@
 
 **Name**: Telegram
 **Creature**: Telegram Bot
-**Vibe**: Fast, reliable, global messaging
-**Emoji**: ✈️
+**Vibe**: Fast, reliable messaging
+**Emoji**: Eyes (default: looking)
 
 ## Role
 
-I am the Telegram integration for WOPR, connecting you to Telegram's fast and secure messaging platform using the Grammy library.
+I am the Telegram integration for WOPR, connecting you to Telegram's messaging platform using the Grammy library.
 
 ## Capabilities
 
-- ✈️ **Grammy-based** - Modern, type-safe Bot API client
-- 👥 **Group Support** - Works in groups, supergroups, and channels
-- 🧵 **Thread Support** - Handles forum topics and reply threads
-- 🔒 **DM Policies** - Control who can message the bot
-- 👀 **Identity Reactions** - Reacts with ✈️ (or agent's emoji)
-- 📎 **Media Support** - Photos, documents, captions
-- 🔄 **Auto-retry** - Handles rate limits gracefully
+- **Grammy-based** - Modern, type-safe Bot API client
+- **Group Support** - Works in groups and supergroups (requires @mention or reply)
+- **DM Policies** - Control who can message the bot (allowlist, pairing, open, disabled)
+- **Group Policies** - Control who can trigger in groups
+- **Identity Reactions** - Reacts with agent's emoji (standard Telegram reactions only)
+- **Message Chunking** - Automatically splits long messages at sentence boundaries (4096 char limit)
+- **Winston Logging** - Structured logging to file and console
 
 ## Prerequisites
 
@@ -28,7 +28,7 @@ I am the Telegram integration for WOPR, connecting you to Telegram's fast and se
 
 2. **Get your User ID** (for allowlist):
    - Message @userinfobot
-   - Or check logs after first message
+   - It will reply with your user ID
 
 ## Configuration
 
@@ -36,21 +36,24 @@ I am the Telegram integration for WOPR, connecting you to Telegram's fast and se
 channels:
   telegram:
     botToken: "123456:ABC..."  # From @BotFather
-    dmPolicy: "pairing"
-    allowFrom: []
-    groupPolicy: "allowlist"
-    mediaMaxMb: 5
+    dmPolicy: "pairing"        # allowlist, pairing, open, disabled
+    allowFrom: []              # User IDs or @usernames for DMs
+    groupPolicy: "allowlist"   # allowlist, open, disabled
+    groupAllowFrom: []         # User IDs for groups
+    timeoutSeconds: 30         # API timeout
 ```
 
-## Features
+## Behavior
 
-- **Mention-gated in groups** - Only responds when @mentioned
-- **Reply threading** - Replies to original message
-- **HTML formatting** - Supports bold, italic, links
-- **Chunking** - Automatically splits long messages (>4096 chars)
+- **In DMs** - Responds to all messages (subject to dmPolicy)
+- **In Groups** - Only responds to @mentions or replies to bot messages
+- **Photo Captions** - Caption text is extracted and processed (photo not analyzed)
+- **Long Responses** - Split at sentence boundaries if over 4096 characters
+- **Reactions** - Adds emoji reaction when processing (standard reactions only)
 
 ## Security
 
-- Bot token stored in config or env var
+- Bot token stored in config, token file, or TELEGRAM_BOT_TOKEN env var
 - DM policies control access
-- No message content logged (only metadata)
+- Group policies control who can trigger
+- Message content not logged (only metadata)

@@ -10,8 +10,6 @@ Complete configuration guide for `wopr-plugin-telegram`.
 - [Authentication](#authentication)
 - [DM Policies](#dm-policies)
 - [Group Policies](#group-policies)
-- [Media Settings](#media-settings)
-- [Webhook Configuration](#webhook-configuration)
 - [Environment Variables](#environment-variables)
 - [Configuration Examples](#configuration-examples)
 
@@ -29,12 +27,11 @@ Complete configuration guide for `wopr-plugin-telegram`.
 | `allowFrom` | array | `[]` | No | Allowed user IDs for DMs |
 | `groupPolicy` | string | `"allowlist"` | No | How to handle group messages |
 | `groupAllowFrom` | array | `[]` | No | Allowed users in groups |
-| `mediaMaxMb` | number | `5` | No | Max attachment size in MB |
 | `timeoutSeconds` | number | `30` | No | API timeout in seconds |
-| `webhookUrl` | string | - | No | Webhook URL (optional) |
-| `webhookPort` | number | `3000` | No | Webhook server port |
 
 *One of `botToken`, `tokenFile`, or `TELEGRAM_BOT_TOKEN` env var is required.
+
+**Note:** The `mediaMaxMb`, `webhookUrl`, and `webhookPort` options appear in the config schema but are not currently implemented in the plugin.
 
 ---
 
@@ -196,75 +193,14 @@ Without this, the bot only sees:
 
 ---
 
-## Media Settings
-
-### `mediaMaxMb`
-
-Maximum file size for photos/documents in megabytes.
-
-```yaml
-channels:
-  telegram:
-    mediaMaxMb: 10  # Allow up to 10MB files
-```
-
-**Default:** 5 MB  
-**Range:** 1-20 MB (Telegram Bot API limits)
-
-### Media Handling
-
-When users send media:
-
-1. **Photos:** Caption text is extracted and sent to AI
-2. **Documents:** Filename and caption sent to AI
-3. **Other media:** Acknowledged but content not processed
-4. **Oversized files:** Rejected with warning message
-
----
-
-## Webhook Configuration
-
-For production deployments, webhooks are recommended over polling.
-
-### Basic Webhook Setup
-
-```yaml
-channels:
-  telegram:
-    botToken: "..."
-    webhookUrl: "https://yourdomain.com/webhook"
-    webhookPort: 3000
-```
-
-### Requirements
-
-- **HTTPS URL** - Telegram requires secure webhooks
-- **Valid SSL certificate** - No self-signed certs
-- **Publicly accessible** - Telegram servers must reach your URL
-- **Correct port** - Usually 443, 80, 88, or 8443
-
-### Webhook vs Polling
-
-| Aspect | Polling | Webhook |
-|--------|---------|---------|
-| Setup complexity | Easy | Requires HTTPS |
-| Latency | 1-5 seconds | Near real-time |
-| Resource usage | Higher (constant requests) | Lower (push-based) |
-| Server requirements | None | Web server |
-| Scaling | Single instance | Multiple instances possible |
-
-**For detailed deployment guide:** [DEPLOYMENT.md](./DEPLOYMENT.md)
-
----
-
 ## Environment Variables
 
 | Variable | Description | Example |
 |----------|-------------|---------|
 | `TELEGRAM_BOT_TOKEN` | Bot token (alternative to config) | `123456:ABC...` |
-| `WOPR_HOME` | WOPR config directory | `~/.wopr` |
+| `WOPR_HOME` | WOPR config directory (used for log file paths) | `~/.wopr` |
 
-The plugin also inherits WOPR's logging configuration.
+The plugin writes logs to `$WOPR_HOME/logs/telegram-plugin.log` and `$WOPR_HOME/logs/telegram-plugin-error.log`.
 
 ---
 
@@ -278,7 +214,7 @@ channels:
     botToken: "123456:ABC..."
 ```
 
-### Secure Production Setup
+### Private Bot (Admin Only)
 
 ```yaml
 channels:
@@ -287,33 +223,31 @@ channels:
     dmPolicy: "allowlist"
     allowFrom:
       - "123456789"  # Admin only for DMs
-    groupPolicy: "allowlist"
-    groupAllowFrom:
-      - "*"  # Anyone in groups (groups are invite-only anyway)
-    mediaMaxMb: 10
+    groupPolicy: "disabled"  # No group support
     timeoutSeconds: 60
-    webhookUrl: "https://bot.example.com/webhook"
-    webhookPort: 443
 ```
 
-### Multi-Environment Setup
-
-Use environment-specific config files:
+### Team Bot with Open Groups
 
 ```yaml
-# config.development.yaml
 channels:
   telegram:
-    botToken: "DEV_TOKEN_HERE"
-    dmPolicy: "open"  # More permissive in dev
-
-# config.production.yaml
-channels:
-  telegram:
-    # Token from env var in production
+    botToken: "123456:ABC..."
     dmPolicy: "allowlist"
     allowFrom:
-      - "${ADMIN_USER_ID}"  # Templating if your config supports it
+      - "123456789"  # Alice
+      - "987654321"  # Bob
+    groupPolicy: "open"  # Anyone in groups can trigger
+```
+
+### Public Bot
+
+```yaml
+channels:
+  telegram:
+    # Token from env var
+    dmPolicy: "pairing"  # WOPR handles pairing
+    groupPolicy: "open"
 ```
 
 ---
@@ -341,5 +275,4 @@ wopr config show
 ## See Also
 
 - [TROUBLESHOOTING.md](./TROUBLESHOOTING.md) - Common configuration issues
-- [DEPLOYMENT.md](./DEPLOYMENT.md) - Production deployment guide
 - [Grammy Configuration](https://grammy.dev/guide/config) - Grammy-specific options

@@ -10,9 +10,8 @@ Common issues and solutions for `wopr-plugin-telegram`.
 - [Bot Not Responding](#bot-not-responding)
 - [Authentication Issues](#authentication-issues)
 - [Group Issues](#group-issues)
-- [Rate Limiting](#rate-limiting)
-- [Webhook Problems](#webhook-problems)
-- [Media Issues](#media-issues)
+- [Reaction Issues](#reaction-issues)
+- [Message Issues](#message-issues)
 - [Performance Issues](#performance-issues)
 - [Getting Help](#getting-help)
 
@@ -206,152 +205,61 @@ To add as admin:
 
 ---
 
-## Rate Limiting
+## Reaction Issues
 
-### Understanding Telegram Rate Limits
+### Bot Reaction Not Showing
 
-Telegram has strict rate limits:
+The plugin reacts to messages using the agent's configured emoji. However:
 
-| Action | Limit |
-|--------|-------|
-| Messages per second | ~30 |
-| Messages per minute to same chat | ~20 |
-| Messages per hour to same chat | ~100 |
-| Group joins per day | ~50 |
+1. **Only standard Telegram reactions work** - Custom emoji are not supported
+2. **Some chats disable reactions** - Check chat settings
+3. **Channels don't support reactions** - This is a Telegram limitation
 
-### Grammy Auto-Retry
+The plugin silently ignores reaction failures, so this won't affect message processing.
 
-**Good news:** Grammy handles rate limits automatically!
+### Supported Reactions
 
-The plugin includes Grammy's auto-retry plugin with exponential backoff. If you hit a rate limit:
-
-1. Grammy catches the `429 Too Many Requests` error
-2. Waits the required time (from `retry_after`)
-3. Retries the request
-4. Logs the retry attempt
-
-**You don't need to do anything.**
-
-### If You're Being Rate Limited
-
-Check your logs for:
-```
-Retrying after X seconds due to rate limit
-```
-
-**Causes:**
-- Sending too many messages quickly
-- Broadcasting to many chats
-- Being in too many groups
-
-**Solutions:**
-- Reduce message frequency
-- Implement message queuing
-- Use a queue system (Redis, etc.)
+The plugin only supports standard Telegram reaction emoji. If your agent's emoji is not in the supported list, reactions will fail silently.
 
 ---
 
-## Webhook Problems
+## Message Issues
 
-### Webhook Not Receiving Updates
+### Long Messages Truncated
 
-1. **Verify HTTPS:**
-   ```bash
-   curl -I https://yourdomain.com/webhook
-   # Should return 200 OK
-   ```
+Messages over 4096 characters are automatically split at sentence boundaries. If splitting looks wrong:
+- Check that responses have proper sentence punctuation
+- Very long sentences without periods may split awkwardly
 
-2. **Check certificate:**
-   Telegram rejects self-signed certificates.
-   Use Let's Encrypt or a valid commercial certificate.
+### Photo Captions Not Processed
 
-3. **Verify webhook is set:**
-   ```bash
-   curl https://api.telegram.org/bot<TOKEN>/getWebhookInfo
-   ```
+The plugin extracts caption text from photos. The photo itself is NOT analyzed - only the text caption is sent to the AI.
 
-4. **Check firewall:**
-   Ensure port is open (443, 80, 88, or 8443).
-
-5. **Test locally:**
-   ```bash
-   # Use ngrok for local testing
-   ngrok http 3000
-   # Use the https URL as webhookUrl
-   ```
-
-### "Conflict: Another webhook is active"
-
-You can only have one webhook per bot. If switching servers:
-
-```bash
-# Delete old webhook first
-curl https://api.telegram.org/bot<TOKEN>/deleteWebhook
-
-# Then set new one
-curl https://api.telegram.org/bot<TOKEN>/setWebhook?url=https://newdomain.com/webhook
-```
-
-### Webhook Timeout Errors
-
-Telegram expects a response within **60 seconds**.
-
-If your AI processing takes longer:
-1. Send an immediate acknowledgment
-2. Process asynchronously
-3. Send result when ready
-
----
-
-## Media Issues
-
-### Photos/Documents Not Processing
-
-1. **Check file size:**
-   ```yaml
-   channels:
-     telegram:
-       mediaMaxMb: 10  # Increase if needed
-   ```
-
-2. **Verify permissions:**
-   Bot needs permission to download files.
-
-3. **Check logs:**
-   Look for "Media too large" or "Failed to download" errors.
-
-### Caption Not Extracted
-
-Captions are processed as message text. If not working:
-- Ensure `text` extraction is enabled in your WOPR config
-- Check that the caption isn't empty
+If caption text isn't being processed:
+- Ensure the photo actually has a caption
+- Check that the sender passes policy checks
 
 ---
 
 ## Performance Issues
-
-### High CPU/Memory Usage
-
-**Polling mode with short intervals:**
-- Default is fine for most use cases
-- Don't reduce polling interval below 1 second
-
-**Large groups with many messages:**
-- Use stricter `groupPolicy` to filter messages
-- Consider webhook mode for high-traffic bots
-
-**Memory leaks:**
-- Report to GitHub issues with heap dump
-- Usually related to session storage
 
 ### Slow Response Times
 
 | Cause | Solution |
 |-------|----------|
 | AI provider slow | Check provider latency, use faster model |
-| Rate limiting | Wait for Grammy retry |
 | Network issues | Check connection to Telegram API |
-| Large context | Reduce session context window |
+| Large context | Reduce session context window in WOPR |
+
+### High Memory Usage
+
+**Large groups with many messages:**
+- Use stricter `groupPolicy` to filter messages
+- In groups, bot only responds to @mentions and replies by default
+
+**Memory leaks:**
+- Report to GitHub issues with heap dump
+- Check WOPR session storage configuration
 
 ---
 
@@ -401,5 +309,4 @@ Include:
 ## See Also
 
 - [CONFIGURATION.md](./CONFIGURATION.md) - Configuration reference
-- [DEPLOYMENT.md](./DEPLOYMENT.md) - Deployment guide
 - [Grammy Error Handling](https://grammy.dev/guide/errors) - Grammy error docs
