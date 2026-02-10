@@ -1,15 +1,19 @@
 {
-  "name": "wopr-plugin-telegram",
-  "version": "1.0.0",
-  "description": "Telegram plugin for WOPR using Grammy",
-  "main": "dist/index.js",
-  "types": "dist/index.d.ts",
-  "scripts": {
-    "build": "tsc",
-    "test": "jest",
-    "lint": "eslint src/**/*.ts",
-    "prepublishOnly": "npm run build"
+  "author": "TSavo",
+  "dependencies": {
+    "grammy": "^1.21.1",
+    "winston": "^3.11.0"
   },
+  "description": "Telegram plugin for WOPR using Grammy",
+  "devDependencies": {
+    "@biomejs/biome": "^2.3.14",
+    "@types/node": "^20.0.0",
+    "typescript": "^5.0.0"
+  },
+  "files": [
+    "dist/**/*",
+    "IDENTITY.md"
+  ],
   "keywords": [
     "wopr",
     "wopr-plugin",
@@ -17,21 +21,21 @@
     "grammy",
     "bot"
   ],
-  "author": "TSavo",
   "license": "MIT",
+  "main": "dist/index.js",
+  "name": "wopr-plugin-telegram",
   "peerDependencies": {
     "wopr": "^2.0.0"
   },
-  "dependencies": {
-    "grammy": "^1.21.1",
-    "winston": "^3.11.0"
+  "scripts": {
+    "build": "tsc",
+    "check": "biome check src/ && tsc --noEmit",
+    "format": "biome format --write src/",
+    "lint": "eslint src/**/*.ts",
+    "lint:fix": "biome check --fix src/",
+    "prepublishOnly": "npm run build",
+    "test": "jest"
   },
-  "devDependencies": {
-    "@types/node": "^20.0.0",
-    "typescript": "^5.0.0"
-  },
-  "files": [
-    "dist/**/*",
-    "IDENTITY.md"
-  ]
+  "types": "dist/index.d.ts",
+  "version": "1.0.0"
 }
