@@ -2,6 +2,7 @@
  * WOPR Telegram Plugin - Grammy-based Telegram Bot integration
  */
 
+import fs from "node:fs";
 import path from "node:path";
 import winston from "winston";
 import { Bot, Context, InputFile } from "grammy";
@@ -169,6 +170,26 @@ function getAckReaction(): string {
   return agentIdentity.emoji?.trim() || "👀";
 }
 
+// Validate that a file path is within allowed directories to prevent arbitrary file read
+function validateTokenFilePath(filePath: string): string {
+  const WOPR_HOME = process.env.WOPR_HOME || path.join(process.env.HOME || "~", ".wopr");
+  const resolved = path.resolve(filePath);
+  const allowedDirs = [
+    path.resolve(WOPR_HOME),
+    path.resolve(process.cwd()),
+  ];
+
+  const isAllowedPath = allowedDirs.some((dir) => resolved.startsWith(dir + path.sep) || resolved === dir);
+  if (!isAllowedPath) {
+    throw new Error(
+      `tokenFile path "${filePath}" is outside allowed directories. ` +
+      `Path must be within WOPR_HOME (${WOPR_HOME}) or the current working directory.`
+    );
+  }
+
+  return resolved;
+}
+
 // Resolve bot token
 function resolveToken(): string {
   if (config.botToken) {
@@ -176,8 +197,8 @@ function resolveToken(): string {
   }
   if (config.tokenFile) {
     try {
-      const fs = require("node:fs");
-      return fs.readFileSync(config.tokenFile, "utf-8").trim();
+      const safePath = validateTokenFilePath(config.tokenFile);
+      return fs.readFileSync(safePath, "utf-8").trim();
     } catch (err) {
       throw new Error(`Failed to read token file: ${err}`);
     }
@@ -487,4 +508,5 @@ const plugin: WOPRPlugin = {
   },
 };
 
+export { validateTokenFilePath };
 export default plugin;
