@@ -7,6 +7,7 @@ import os from "node:os";
 import path from "node:path";
 import winston from "winston";
 import { Bot, Context, InputFile } from "grammy";
+import { autoRetry } from "@grammyjs/auto-retry";
 import type {
   WOPRPlugin,
   WOPRPluginContext,
@@ -29,6 +30,9 @@ interface TelegramConfig {
   timeoutSeconds?: number;
   webhookUrl?: string;
   webhookPort?: number;
+  maxRetries?: number;
+  retryBaseDelay?: number;
+  retryMaxDelay?: number;
 }
 
 // Module-level state
@@ -149,6 +153,22 @@ const configSchema: ConfigSchema = {
       label: "Webhook Port",
       placeholder: "3000",
       description: "Port for webhook server",
+    },
+    {
+      name: "maxRetries",
+      type: "number",
+      label: "Max Retries",
+      placeholder: "3",
+      default: 3,
+      description: "Maximum number of retry attempts for failed API calls",
+    },
+    {
+      name: "retryMaxDelay",
+      type: "number",
+      label: "Retry Max Delay (seconds)",
+      placeholder: "30",
+      default: 30,
+      description: "Maximum delay to wait for rate-limited retries",
     },
   ],
 };
@@ -620,6 +640,19 @@ async function startBot(): Promise<void> {
       timeoutSeconds: config.timeoutSeconds || 30,
     },
   });
+
+  // Install auto-retry transformer for exponential backoff on failed API calls
+  const maxRetryAttempts = config.maxRetries ?? 3;
+  const maxDelaySeconds = config.retryMaxDelay ?? 30;
+  bot.api.config.use(autoRetry({
+    maxRetryAttempts,
+    maxDelaySeconds,
+    rethrowInternalServerErrors: false,
+    rethrowHttpErrors: false,
+  }));
+  logger.info(
+    `Auto-retry enabled: maxRetryAttempts=${maxRetryAttempts}, maxDelaySeconds=${maxDelaySeconds}`
+  );
 
   // Error handler
   bot.catch((err) => {
