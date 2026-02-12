@@ -19,10 +19,9 @@ import type {
   ConfigSchema,
   StreamMessage,
   AgentIdentity,
-  ChannelInfo,
-  LogMessageOptions,
-  InjectOptions,
-} from "./types.js";
+  ChannelRef,
+  PluginInjectOptions,
+} from "@wopr-network/plugin-types";
 
 // Telegram config interface
 interface TelegramConfig {
@@ -640,14 +639,14 @@ async function handleMessage(grammyCtx: Context): Promise<void> {
 
   // Build channel info
   const channelId = isGroup ? `group:${chat.id}` : `dm:${user.id}`;
-  const channelInfo: ChannelInfo = {
+  const channelInfo: ChannelRef = {
     type: "telegram",
     id: channelId,
     name: chat.title || user.first_name || "Telegram DM",
   };
 
   // Log for context
-  const logOptions: LogMessageOptions = {
+  const logOptions = {
     from: user.first_name || user.username || String(user.id),
     channel: channelInfo,
   };
@@ -806,7 +805,7 @@ async function injectMessage(
   user: any,
   chat: any,
   sessionKey: string,
-  channelInfo: ChannelInfo,
+  channelInfo: ChannelRef,
   replyToMessageId?: number,
   images?: string[],
 ): Promise<void> {
@@ -831,11 +830,11 @@ async function injectMessage(
   const prefix = `[${user.first_name || user.username || "User"}]: `;
   const messageWithPrefix = prefix + (text || "[media]");
 
-  const injectOpts: InjectOptions = {
+  const injectOpts: PluginInjectOptions = {
     from: user.first_name || user.username || String(user.id),
     channel: channelInfo,
     onStream: (msg: StreamMessage) => {
-      if (msg.type === "text" || msg.type === "assistant") {
+      if (msg.type === "text") {
         stream.append(msg.content);
       }
     },
@@ -1063,7 +1062,7 @@ function getSessionKey(grammyCtx: Context): string {
 }
 
 // Helper to get channel info from a grammY context
-function getChannelInfo(grammyCtx: Context): ChannelInfo {
+function getChannelRef(grammyCtx: Context): ChannelRef {
   const chat = grammyCtx.chat;
   const user = grammyCtx.from;
   if (!chat || !user) return { type: "telegram", id: "unknown" };
@@ -1094,7 +1093,7 @@ async function injectCommandMessage(
   }
 
   const sessionKey = getSessionKey(grammyCtx);
-  const channelInfo = getChannelInfo(grammyCtx);
+  const channelInfo = getChannelRef(grammyCtx);
   const from = getDisplayName(grammyCtx);
   const prefix = `[${from}]: `;
 

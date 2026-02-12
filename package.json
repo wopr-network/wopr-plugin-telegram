@@ -2,6 +2,7 @@
   "author": "TSavo",
   "dependencies": {
     "@grammyjs/auto-retry": "^2.0.2",
+    "@wopr-network/plugin-types": "github:wopr-network/wopr-plugin-types",
     "grammy": "^1.40.0",
     "winston": "^3.11.0"
   },
