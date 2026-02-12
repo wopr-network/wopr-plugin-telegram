@@ -730,6 +730,26 @@ async function handleMessage(grammyCtx: Context): Promise<void> {
   );
 }
 
+// Start a typing indicator that refreshes every 5 seconds.
+// Returns a stop function to clear the interval.
+function startTypingIndicator(chatId: number | string, action: "typing" | "upload_photo" | "upload_document" = "typing"): () => void {
+  if (!bot) return () => {};
+
+  const send = () => {
+    bot?.api.sendChatAction(chatId, action).catch((err) => {
+      logger.debug("Failed to send chat action:", err);
+    });
+  };
+
+  // Send immediately, then refresh every 5 seconds
+  send();
+  const interval = setInterval(send, 5000);
+
+  return () => {
+    clearInterval(interval);
+  };
+}
+
 // Inject message to WOPR with streaming support
 async function injectMessage(
   text: string,
@@ -776,8 +796,14 @@ async function injectMessage(
     injectOpts.images = images;
   }
 
+  // Start typing indicator while processing
+  const stopTyping = startTypingIndicator(chat.id);
+
   try {
     const response = await ctx.inject(sessionKey, messageWithPrefix, injectOpts);
+
+    // Stop typing indicator now that we have a response
+    stopTyping();
 
     // Finalize the stream
     await stream.finalize();
@@ -800,6 +826,9 @@ async function injectMessage(
       }
     }
   } catch (err) {
+    // Stop typing on error
+    stopTyping();
+
     // Finalize stream on error
     await stream.finalize();
     if (activeStreams.get(streamKey)?.streamId === currentStreamId) {
