@@ -2,9 +2,11 @@
  * WOPR Telegram Plugin - Grammy-based Telegram Bot integration
  */
 
-import fs from "node:fs";
+import fs, { createWriteStream, existsSync, mkdirSync } from "node:fs";
 import os from "node:os";
 import path from "node:path";
+import { Readable } from "node:stream";
+import { pipeline } from "node:stream/promises";
 import winston from "winston";
 import { Bot, type Context, InputFile } from "grammy";
 import { autoRetry } from "@grammyjs/auto-retry";
@@ -16,6 +18,7 @@ import type {
   AgentIdentity,
   ChannelInfo,
   LogMessageOptions,
+  InjectOptions,
 } from "./types.js";
 
 // Telegram config interface
@@ -358,6 +361,97 @@ function getAckReaction(): string {
   return agentIdentity.emoji?.trim() || "👀";
 }
 
+// Telegram Bot API file size limit
+const TELEGRAM_DOWNLOAD_LIMIT_BYTES = 20 * 1024 * 1024; // 20MB download limit
+
+// Attachments directory
+const ATTACHMENTS_DIR = existsSync("/data")
+  ? "/data/attachments"
+  : path.join(process.cwd(), "attachments");
+
+/**
+ * Download a file from Telegram's servers using the Bot API.
+ * Returns the local file path on success, or null on failure.
+ */
+async function downloadTelegramFile(
+  fileId: string,
+  fileName: string,
+  userId: string | number,
+): Promise<{ localPath: string; telegramFilePath: string } | null> {
+  if (!bot) return null;
+
+  try {
+    const file = await bot.api.getFile(fileId);
+    if (!file.file_path) {
+      logger.warn("Telegram getFile returned no file_path", { fileId });
+      return null;
+    }
+
+    // Check file size against limit
+    if (file.file_size && file.file_size > TELEGRAM_DOWNLOAD_LIMIT_BYTES) {
+      logger.warn("File exceeds Telegram download limit", {
+        fileId,
+        size: file.file_size,
+        limit: TELEGRAM_DOWNLOAD_LIMIT_BYTES,
+      });
+      return null;
+    }
+
+    // Check against user-configured max
+    const maxBytes = (config.mediaMaxMb ?? 5) * 1024 * 1024;
+    if (file.file_size && file.file_size > maxBytes) {
+      logger.warn("File exceeds configured mediaMaxMb", {
+        fileId,
+        size: file.file_size,
+        limit: maxBytes,
+      });
+      return null;
+    }
+
+    // Build download URL
+    const token = resolveToken();
+    const downloadUrl = `https://api.telegram.org/file/bot${token}/${file.file_path}`;
+
+    // Ensure attachments directory exists
+    if (!existsSync(ATTACHMENTS_DIR)) {
+      mkdirSync(ATTACHMENTS_DIR, { recursive: true });
+    }
+
+    // Create safe filename
+    const timestamp = Date.now();
+    const safeName = fileName.replace(/[^a-zA-Z0-9._-]/g, "_") || "attachment";
+    const localName = `${timestamp}-${userId}-${safeName}`;
+    const localPath = path.join(ATTACHMENTS_DIR, localName);
+
+    // Download the file
+    const response = await fetch(downloadUrl);
+    if (!response.ok || !response.body) {
+      logger.warn("Failed to download Telegram file", {
+        fileId,
+        status: response.status,
+      });
+      return null;
+    }
+
+    const fileStream = createWriteStream(localPath);
+    const nodeStream = Readable.fromWeb(response.body as import("node:stream/web").ReadableStream);
+    await pipeline(nodeStream, fileStream);
+
+    logger.info("Telegram file saved", {
+      filename: localName,
+      size: file.file_size,
+      fileId,
+    });
+    return { localPath, telegramFilePath: file.file_path };
+  } catch (err) {
+    logger.error("Error downloading Telegram file", {
+      fileId,
+      error: String(err),
+    });
+    return null;
+  }
+}
+
 // Validate that a file path is within allowed directories to prevent arbitrary file read
 function validateTokenFilePath(filePath: string): string {
   const WOPR_HOME = process.env.WOPR_HOME || path.join(os.homedir(), ".wopr");
@@ -463,26 +557,32 @@ async function handleMessage(grammyCtx: Context): Promise<void> {
     return;
   }
 
-  // Extract text
+  // Extract text (caption for media messages, text for plain messages)
   let text = msg.text || msg.caption || "";
-  
+
   // Handle mentions - check if bot is mentioned in groups
   if (isGroup && grammyCtx.me) {
     const botUsername = grammyCtx.me.username;
     const isMentioned = text.includes(`@${botUsername}`);
-    
+
     if (!isMentioned && !msg.reply_to_message) {
       // In groups, only respond to mentions or replies
       return;
     }
-    
+
     // Remove mention from text
     if (isMentioned) {
       text = text.replace(new RegExp(`@${botUsername}\\s*`, "gi"), "").trim();
     }
   }
 
-  if (!text && (!msg.photo || msg.photo.length === 0)) {
+  // Determine if message has media
+  const hasPhoto = msg.photo && msg.photo.length > 0;
+  const hasDocument = !!msg.document;
+  const hasVoice = !!msg.voice;
+  const hasMedia = hasPhoto || hasDocument || hasVoice;
+
+  if (!text && !hasMedia) {
     return; // Skip empty messages without media
   }
 
@@ -521,8 +621,113 @@ async function handleMessage(grammyCtx: Context): Promise<void> {
     // Reactions may not be supported
   }
 
-  // Inject to WOPR
-  await injectMessage(text, user, chat, sessionKey, channelInfo, msg.message_id);
+  // Process media attachments
+  const attachmentPaths: string[] = [];
+  const imageUrls: string[] = [];
+
+  if (hasPhoto && msg.photo) {
+    // Telegram sends multiple sizes; pick the largest (last in array)
+    const largest = msg.photo[msg.photo.length - 1];
+    // Check file size before attempting download
+    if (largest.file_size && largest.file_size > TELEGRAM_DOWNLOAD_LIMIT_BYTES) {
+      const sizeMb = (largest.file_size / (1024 * 1024)).toFixed(1);
+      await sendMessage(chat.id, `Sorry, that photo is too large to process (${sizeMb}MB, Telegram limit is 20MB).`, {
+        replyToMessageId: msg.message_id,
+      });
+      return;
+    }
+    const photoMaxBytes = (config.mediaMaxMb ?? 5) * 1024 * 1024;
+    if (largest.file_size && largest.file_size > photoMaxBytes) {
+      const sizeMb = (largest.file_size / (1024 * 1024)).toFixed(1);
+      const limitMb = config.mediaMaxMb ?? 5;
+      await sendMessage(chat.id, `Sorry, that photo exceeds the configured size limit (${sizeMb}MB, limit is ${limitMb}MB).`, {
+        replyToMessageId: msg.message_id,
+      });
+      return;
+    }
+    const result = await downloadTelegramFile(
+      largest.file_id,
+      "photo.jpg",
+      user.id,
+    );
+    if (result) {
+      attachmentPaths.push(result.localPath);
+      // Pass local file path for vision models (avoids leaking bot token in URLs)
+      imageUrls.push(result.localPath);
+    }
+  }
+
+  if (hasDocument && msg.document) {
+    const doc = msg.document;
+    // Check file size before attempting download
+    if (doc.file_size && doc.file_size > TELEGRAM_DOWNLOAD_LIMIT_BYTES) {
+      await sendMessage(chat.id, "Sorry, that file is too large. Telegram limits bot downloads to 20MB.", {
+        replyToMessageId: msg.message_id,
+      });
+      return;
+    }
+    const maxBytes = (config.mediaMaxMb ?? 5) * 1024 * 1024;
+    if (doc.file_size && doc.file_size > maxBytes) {
+      await sendMessage(chat.id, `Sorry, that file exceeds the configured size limit of ${config.mediaMaxMb ?? 5}MB.`, {
+        replyToMessageId: msg.message_id,
+      });
+      return;
+    }
+    const fileName = doc.file_name || "document";
+    const result = await downloadTelegramFile(doc.file_id, fileName, user.id);
+    if (result) {
+      attachmentPaths.push(result.localPath);
+    }
+  }
+
+  if (hasVoice && msg.voice) {
+    const voice = msg.voice;
+    // Voice messages are typically small OGG files
+    if (voice.file_size && voice.file_size > TELEGRAM_DOWNLOAD_LIMIT_BYTES) {
+      await sendMessage(chat.id, "Sorry, that voice message is too large to process.", {
+        replyToMessageId: msg.message_id,
+      });
+      return;
+    }
+    const voiceMaxBytes = (config.mediaMaxMb ?? 5) * 1024 * 1024;
+    if (voice.file_size && voice.file_size > voiceMaxBytes) {
+      await sendMessage(chat.id, `Sorry, that voice message exceeds the configured size limit of ${config.mediaMaxMb ?? 5}MB.`, {
+        replyToMessageId: msg.message_id,
+      });
+      return;
+    }
+    const result = await downloadTelegramFile(
+      voice.file_id,
+      "voice.ogg",
+      user.id,
+    );
+    if (result) {
+      attachmentPaths.push(result.localPath);
+    }
+  }
+
+  // Append attachment info to message content (matching Discord plugin pattern)
+  if (attachmentPaths.length > 0) {
+    const attachmentInfo = attachmentPaths
+      .map((p) => `[Attachment: ${p}]`)
+      .join("\n");
+    text = text ? `${text}\n\n${attachmentInfo}` : attachmentInfo;
+    logger.info("Attachments appended to message", {
+      count: attachmentPaths.length,
+      channelId,
+    });
+  }
+
+  // Inject to WOPR with image URLs for vision models
+  await injectMessage(
+    text,
+    user,
+    chat,
+    sessionKey,
+    channelInfo,
+    msg.message_id,
+    imageUrls.length > 0 ? imageUrls : undefined,
+  );
 }
 
 // Inject message to WOPR with streaming support
@@ -532,7 +737,8 @@ async function injectMessage(
   chat: any,
   sessionKey: string,
   channelInfo: ChannelInfo,
-  replyToMessageId?: number
+  replyToMessageId?: number,
+  images?: string[],
 ): Promise<void> {
   if (!ctx) return;
 
@@ -555,16 +761,23 @@ async function injectMessage(
   const prefix = `[${user.first_name || user.username || "User"}]: `;
   const messageWithPrefix = prefix + (text || "[media]");
 
+  const injectOpts: InjectOptions = {
+    from: user.first_name || user.username || String(user.id),
+    channel: channelInfo,
+    onStream: (msg: StreamMessage) => {
+      if (msg.type === "text" || msg.type === "assistant") {
+        stream.append(msg.content);
+      }
+    },
+  };
+
+  // Pass image URLs for vision-capable models
+  if (images && images.length > 0) {
+    injectOpts.images = images;
+  }
+
   try {
-    const response = await ctx.inject(sessionKey, messageWithPrefix, {
-      from: user.first_name || user.username || String(user.id),
-      channel: channelInfo,
-      onStream: (msg: StreamMessage) => {
-        if (msg.type === "text" || msg.type === "assistant") {
-          stream.append(msg.content);
-        }
-      },
-    });
+    const response = await ctx.inject(sessionKey, messageWithPrefix, injectOpts);
 
     // Finalize the stream
     await stream.finalize();
@@ -607,7 +820,75 @@ interface SendOptions {
   replyToMessageId?: number;
   mediaUrl?: string;
   mediaBuffer?: Buffer;
-  mediaType?: string;
+  mediaType?: "photo" | "document";
+}
+
+/**
+ * Send a photo to a Telegram chat.
+ * Accepts a URL, file path, or Buffer.
+ */
+async function sendPhoto(
+  chatId: number | string,
+  photo: string | Buffer,
+  caption?: string,
+  replyToMessageId?: number,
+): Promise<void> {
+  if (!bot) throw new Error("Telegram bot not initialized");
+
+  let input: InputFile | string;
+  if (Buffer.isBuffer(photo)) {
+    input = new InputFile(photo);
+  } else if (photo.startsWith("http://") || photo.startsWith("https://")) {
+    input = photo;
+  } else {
+    // Local file path
+    input = new InputFile(fs.createReadStream(photo), path.basename(photo));
+  }
+  try {
+    await bot.api.sendPhoto(chatId, input, {
+      caption,
+      parse_mode: "HTML",
+      reply_to_message_id: replyToMessageId,
+    });
+  } catch (err) {
+    logger.error("Failed to send photo", { chatId, error: String(err) });
+    throw err;
+  }
+}
+
+/**
+ * Send a document to a Telegram chat.
+ * Accepts a URL, file path, or Buffer.
+ */
+async function sendDocument(
+  chatId: number | string,
+  document: string | Buffer,
+  caption?: string,
+  replyToMessageId?: number,
+  fileName?: string,
+): Promise<void> {
+  if (!bot) throw new Error("Telegram bot not initialized");
+
+  let input: InputFile | string;
+  if (Buffer.isBuffer(document)) {
+    input = new InputFile(document, fileName);
+  } else if (document.startsWith("http://") || document.startsWith("https://")) {
+    input = document;
+  } else {
+    // Local file path
+    input = new InputFile(fs.createReadStream(document), fileName || path.basename(document));
+  }
+
+  try {
+    await bot.api.sendDocument(chatId, input, {
+      caption,
+      parse_mode: "HTML",
+      reply_to_message_id: replyToMessageId,
+    });
+  } catch (err) {
+    logger.error("Failed to send document", { chatId, error: String(err) });
+    throw err;
+  }
 }
 
 async function sendMessage(
@@ -617,6 +898,19 @@ async function sendMessage(
 ): Promise<void> {
   if (!bot) {
     throw new Error("Telegram bot not initialized");
+  }
+
+  // Handle media responses
+  if (opts.mediaUrl || opts.mediaBuffer) {
+    const media = opts.mediaBuffer || opts.mediaUrl!;
+    if (opts.mediaType === "photo") {
+      await sendPhoto(chatId, media, text || undefined, opts.replyToMessageId);
+      return;
+    }
+    if (opts.mediaType === "document") {
+      await sendDocument(chatId, media, text || undefined, opts.replyToMessageId);
+      return;
+    }
   }
 
   const maxLength = 4096; // Telegram message limit
@@ -656,21 +950,12 @@ async function sendMessage(
   for (let i = 0; i < chunks.length; i++) {
     const chunk = chunks[i];
 
-    const params: any = {
-      chat_id: chatId,
-      text: chunk,
-      parse_mode: "HTML",
-    };
-
-    // Only reply to original message on first chunk
-    if (i === 0 && opts.replyToMessageId) {
-      params.reply_to_message_id = opts.replyToMessageId;
-    }
+    const replyId = i === 0 ? opts.replyToMessageId : undefined;
 
     try {
-      await bot.api.sendMessage(params.chat_id, params.text, {
-        parse_mode: params.parse_mode,
-        reply_to_message_id: params.reply_to_message_id,
+      await bot.api.sendMessage(chatId, chunk, {
+        parse_mode: "HTML",
+        reply_to_message_id: replyId,
       });
     } catch (err) {
       logger.error("Failed to send Telegram message:", err);
@@ -985,5 +1270,5 @@ const plugin: WOPRPlugin = {
   },
 };
 
-export { validateTokenFilePath };
+export { validateTokenFilePath, downloadTelegramFile, sendPhoto, sendDocument };
 export default plugin;
