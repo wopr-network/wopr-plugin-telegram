@@ -313,8 +313,8 @@ async function handleMessage(grammyCtx: Context): Promise<void> {
     channel: channelInfo,
   };
 
-  const sessionKey = `telegram-${chat.id}`;
-  
+  const sessionKey = isGroup ? `telegram-group:${chat.id}` : `telegram-dm:${user.id}`;
+
   // Log the incoming message
   if (ctx) {
     ctx.logMessage(sessionKey, text || "[media]", logOptions);
@@ -498,10 +498,24 @@ async function injectCommandMessage(
   }
 }
 
+// Check authorization for a command handler; returns true if blocked
+async function checkCommandAuth(grammyCtx: Context): Promise<boolean> {
+  const user = grammyCtx.from;
+  const chat = grammyCtx.chat;
+  if (!user || !chat) return true;
+  const isGroup = chat.type === "group" || chat.type === "supergroup";
+  if (!isAllowed(String(user.id), user.username, isGroup)) {
+    logger.info(`Command from ${user.id} blocked by policy`);
+    return true;
+  }
+  return false;
+}
+
 // Register command handlers on the bot instance
 function registerCommandHandlers(botInstance: Bot): void {
   // /ask <question> - Ask WOPR a question
   botInstance.command("ask", async (grammyCtx) => {
+    if (await checkCommandAuth(grammyCtx)) return;
     const question = typeof grammyCtx.match === "string" ? grammyCtx.match.trim() : "";
     if (!question) {
       await grammyCtx.reply("Usage: /ask <your question>\n\nExample: /ask What is the meaning of life?");
@@ -512,6 +526,7 @@ function registerCommandHandlers(botInstance: Bot): void {
 
   // /model <name> - Switch AI model
   botInstance.command("model", async (grammyCtx) => {
+    if (await checkCommandAuth(grammyCtx)) return;
     const modelName = typeof grammyCtx.match === "string" ? grammyCtx.match.trim() : "";
     if (!modelName) {
       await grammyCtx.reply("Usage: /model <model-name>\n\nExample: /model gpt-4o\nExample: /model opus");
@@ -522,6 +537,7 @@ function registerCommandHandlers(botInstance: Bot): void {
 
   // /session <name> - Switch to a named session
   botInstance.command("session", async (grammyCtx) => {
+    if (await checkCommandAuth(grammyCtx)) return;
     const sessionName = typeof grammyCtx.match === "string" ? grammyCtx.match.trim() : "";
     if (!sessionName) {
       await grammyCtx.reply("Usage: /session <name>\n\nExample: /session project-alpha");
@@ -532,6 +548,7 @@ function registerCommandHandlers(botInstance: Bot): void {
 
   // /status - Show session status
   botInstance.command("status", async (grammyCtx) => {
+    if (await checkCommandAuth(grammyCtx)) return;
     if (!ctx || !grammyCtx.chat) {
       await grammyCtx.reply("Bot is not connected to WOPR.");
       return;
@@ -556,6 +573,7 @@ function registerCommandHandlers(botInstance: Bot): void {
 
   // /claim <code> - Claim bot ownership
   botInstance.command("claim", async (grammyCtx) => {
+    if (await checkCommandAuth(grammyCtx)) return;
     const chat = grammyCtx.chat;
     if (!chat) return;
     const isGroup = chat.type === "group" || chat.type === "supergroup";
@@ -573,6 +591,7 @@ function registerCommandHandlers(botInstance: Bot): void {
 
   // /help - Show available commands
   botInstance.command("help", async (grammyCtx) => {
+    if (await checkCommandAuth(grammyCtx)) return;
     if (!grammyCtx.chat) return;
     const helpText = [
       `<b>WOPR Telegram Commands</b>`,
