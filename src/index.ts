@@ -628,6 +628,23 @@ async function handleMessage(grammyCtx: Context): Promise<void> {
   if (hasPhoto && msg.photo) {
     // Telegram sends multiple sizes; pick the largest (last in array)
     const largest = msg.photo[msg.photo.length - 1];
+    // Check file size before attempting download
+    if (largest.file_size && largest.file_size > TELEGRAM_DOWNLOAD_LIMIT_BYTES) {
+      const sizeMb = (largest.file_size / (1024 * 1024)).toFixed(1);
+      await sendMessage(chat.id, `Sorry, that photo is too large to process (${sizeMb}MB, Telegram limit is 20MB).`, {
+        replyToMessageId: msg.message_id,
+      });
+      return;
+    }
+    const photoMaxBytes = (config.mediaMaxMb ?? 5) * 1024 * 1024;
+    if (largest.file_size && largest.file_size > photoMaxBytes) {
+      const sizeMb = (largest.file_size / (1024 * 1024)).toFixed(1);
+      const limitMb = config.mediaMaxMb ?? 5;
+      await sendMessage(chat.id, `Sorry, that photo exceeds the configured size limit (${sizeMb}MB, limit is ${limitMb}MB).`, {
+        replyToMessageId: msg.message_id,
+      });
+      return;
+    }
     const result = await downloadTelegramFile(
       largest.file_id,
       "photo.jpg",
