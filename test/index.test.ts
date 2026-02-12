@@ -17,13 +17,26 @@ const mockBotStart = vi.fn().mockResolvedValue(undefined);
 const mockBotStop = vi.fn().mockResolvedValue(undefined);
 const mockBotOn = vi.fn();
 const mockBotCatch = vi.fn();
-const mockSendMessage = vi.fn().mockResolvedValue({});
+const mockBotCommand = vi.fn();
+const mockSendMessage = vi.fn().mockResolvedValue({ message_id: 1 });
+const mockSetMyCommands = vi.fn().mockResolvedValue(undefined);
+const mockDeleteWebhook = vi.fn().mockResolvedValue(undefined);
+const mockSendChatAction = vi.fn().mockResolvedValue(undefined);
+const mockEditMessageText = vi.fn().mockResolvedValue(undefined);
+const mockConfigUse = vi.fn();
 
 vi.mock("grammy", () => {
   class Bot {
     token: string;
     options: any;
-    api = { sendMessage: mockSendMessage };
+    api = {
+      sendMessage: mockSendMessage,
+      setMyCommands: mockSetMyCommands,
+      deleteWebhook: mockDeleteWebhook,
+      sendChatAction: mockSendChatAction,
+      editMessageText: mockEditMessageText,
+      config: { use: mockConfigUse },
+    };
     constructor(token: string, options?: any) {
       this.token = token;
       this.options = options;
@@ -32,11 +45,21 @@ vi.mock("grammy", () => {
     stop = mockBotStop;
     on = mockBotOn;
     catch = mockBotCatch;
+    command = mockBotCommand;
   }
   class InputFile {}
   class Context {}
-  return { Bot, InputFile, Context };
+  function webhookCallback() { return vi.fn(); }
+  return { Bot, InputFile, Context, webhookCallback };
 });
+
+// ---------------------------------------------------------------------------
+// Mock @grammyjs/auto-retry
+// ---------------------------------------------------------------------------
+
+vi.mock("@grammyjs/auto-retry", () => ({
+  autoRetry: vi.fn(() => vi.fn()),
+}));
 
 // ---------------------------------------------------------------------------
 // Mock winston so we don't write real log files
@@ -126,6 +149,8 @@ function makeContext(overrides: Record<string, any> = {}): any {
 describe("wopr-plugin-telegram", () => {
   let plugin: any;
   let validateTokenFilePath: (p: string) => string;
+  let STANDARD_REACTIONS: ReadonlySet<string>;
+  let isStandardReaction: (emoji: string) => boolean;
 
   beforeEach(async () => {
     vi.resetModules();
@@ -138,6 +163,8 @@ describe("wopr-plugin-telegram", () => {
     const mod = await import("../src/index.js");
     plugin = mod.default;
     validateTokenFilePath = mod.validateTokenFilePath;
+    STANDARD_REACTIONS = mod.STANDARD_REACTIONS;
+    isStandardReaction = mod.isStandardReaction;
   });
 
   afterEach(async () => {
@@ -537,7 +564,7 @@ describe("wopr-plugin-telegram", () => {
 
       // The inject call should have the mention stripped
       expect(woprCtx.inject).toHaveBeenCalledWith(
-        "telegram--100123",
+        "telegram-group:-100123",
         expect.stringContaining("hello there"),
         expect.any(Object)
       );
@@ -866,7 +893,7 @@ describe("wopr-plugin-telegram", () => {
       await messageHandler(grammyCtx);
 
       expect(woprCtx.logMessage).toHaveBeenCalledWith(
-        "telegram-12345",
+        "telegram-dm:12345",
         "Hello",
         expect.objectContaining({
           channel: expect.objectContaining({
@@ -895,7 +922,7 @@ describe("wopr-plugin-telegram", () => {
       await messageHandler(grammyCtx);
 
       expect(woprCtx.logMessage).toHaveBeenCalledWith(
-        "telegram--100123",
+        "telegram-group:-100123",
         expect.any(String),
         expect.objectContaining({
           channel: expect.objectContaining({
@@ -919,7 +946,7 @@ describe("wopr-plugin-telegram", () => {
       await messageHandler(grammyCtx);
 
       expect(woprCtx.inject).toHaveBeenCalledWith(
-        "telegram-12345",
+        "telegram-dm:12345",
         "[Alice]: Hello",
         expect.any(Object)
       );
@@ -937,10 +964,124 @@ describe("wopr-plugin-telegram", () => {
       await messageHandler(grammyCtx);
 
       expect(woprCtx.inject).toHaveBeenCalledWith(
-        "telegram-12345",
+        "telegram-dm:12345",
         expect.stringContaining("[bob42]"),
         expect.any(Object)
       );
+    });
+  });
+
+  // -------------------------------------------------------------------------
+  // Reactions (Bot API 8.0+)
+  // -------------------------------------------------------------------------
+
+  describe("reactions", () => {
+    it("should export STANDARD_REACTIONS as a non-empty Set", () => {
+      expect(STANDARD_REACTIONS).toBeInstanceOf(Set);
+      expect(STANDARD_REACTIONS.size).toBeGreaterThan(60);
+    });
+
+    it("should include known standard emoji in STANDARD_REACTIONS", () => {
+      expect(STANDARD_REACTIONS.has("\u{1F44D}")).toBe(true); // thumbs up
+      expect(STANDARD_REACTIONS.has("\u{1F525}")).toBe(true); // fire
+      expect(STANDARD_REACTIONS.has("\u{1F440}")).toBe(true); // eyes
+      expect(STANDARD_REACTIONS.has("\u{2764}")).toBe(true);  // heart
+    });
+
+    it("should not include non-standard emoji in STANDARD_REACTIONS", () => {
+      expect(STANDARD_REACTIONS.has("\u{1F916}")).toBe(false); // robot
+      expect(STANDARD_REACTIONS.has("\u{1F4A1}")).toBe(false); // lightbulb
+      expect(STANDARD_REACTIONS.has("hello")).toBe(false);
+    });
+
+    it("isStandardReaction should return true for valid reactions", () => {
+      expect(isStandardReaction("\u{1F44D}")).toBe(true);
+      expect(isStandardReaction("\u{1F440}")).toBe(true);
+    });
+
+    it("isStandardReaction should return false for invalid reactions", () => {
+      expect(isStandardReaction("\u{1F916}")).toBe(false);
+      expect(isStandardReaction("not-an-emoji")).toBe(false);
+    });
+
+    it("should use ackReaction config override for reaction emoji", async () => {
+      vi.resetModules();
+      vi.clearAllMocks();
+      const mod = await import("../src/index.js");
+      const freshPlugin = mod.default;
+
+      // Set ackReaction to thumbs up (a standard reaction)
+      const woprCtx = makeContext({
+        getConfig: vi.fn(() => ({
+          botToken: "test-token-123",
+          ackReaction: "\u{1F44D}",
+        })),
+        getAgentIdentity: vi.fn().mockResolvedValue({ name: "Bot", emoji: "\u{1F916}" }),
+      });
+      await freshPlugin.init(woprCtx);
+
+      const onCall = mockBotOn.mock.calls.find(
+        (call: any[]) => call[0] === "message"
+      );
+      const handler = onCall![1];
+
+      const grammyCtx = {
+        message: { text: "Hello", message_id: 42, photo: [], reply_to_message: null, caption: null },
+        from: { id: 12345, first_name: "Alice", username: "alice" },
+        chat: { id: 12345, type: "private" },
+        me: { id: 99999, username: "testbot" },
+        react: vi.fn().mockResolvedValue(undefined),
+      };
+      await handler(grammyCtx);
+
+      // Should react with thumbs up (config override) instead of robot (identity emoji)
+      expect(grammyCtx.react).toHaveBeenCalledWith("\u{1F44D}");
+      await freshPlugin.shutdown();
+    });
+
+    it("should not react when ackReaction config is a non-standard emoji", async () => {
+      vi.resetModules();
+      vi.clearAllMocks();
+      const mod = await import("../src/index.js");
+      const freshPlugin = mod.default;
+
+      const woprCtx = makeContext({
+        getConfig: vi.fn(() => ({
+          botToken: "test-token-123",
+          ackReaction: "\u{1F916}",
+        })),
+      });
+      await freshPlugin.init(woprCtx);
+
+      const onCall = mockBotOn.mock.calls.find(
+        (call: any[]) => call[0] === "message"
+      );
+      const handler = onCall![1];
+
+      const grammyCtx = {
+        message: { text: "Hello", message_id: 42, photo: [], reply_to_message: null, caption: null },
+        from: { id: 12345, first_name: "Alice", username: "alice" },
+        chat: { id: 12345, type: "private" },
+        me: { id: 99999, username: "testbot" },
+        react: vi.fn().mockResolvedValue(undefined),
+      };
+      await handler(grammyCtx);
+
+      // Robot emoji is not in standard set, so no reaction
+      expect(grammyCtx.react).not.toHaveBeenCalled();
+      await freshPlugin.shutdown();
+    });
+
+    it("should include ackReaction field in config schema", async () => {
+      const ctx = makeContext();
+      await plugin.init(ctx);
+
+      const schemaCall = ctx.registerConfigSchema.mock.calls[0];
+      const schema = schemaCall[1];
+      const ackField = schema.fields.find((f: any) => f.name === "ackReaction");
+      expect(ackField).toBeDefined();
+      expect(ackField.type).toBe("text");
+      expect(ackField.label).toBe("Acknowledgment Reaction");
     });
   });
 
