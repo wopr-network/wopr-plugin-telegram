@@ -6,7 +6,7 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import winston from "winston";
-import { Bot, Context, InputFile } from "grammy";
+import { Bot, type Context, InputFile } from "grammy";
 import { autoRetry } from "@grammyjs/auto-retry";
 import type {
   WOPRPlugin,
@@ -41,6 +41,171 @@ let agentIdentity: AgentIdentity = { name: "WOPR", emoji: "👀" };
 let bot: Bot | null = null;
 let isShuttingDown = false;
 let logger: winston.Logger;
+
+// Streaming constants
+const STREAM_FLUSH_INTERVAL_MS = 2000; // Flush edits every 2s (~30 edits/min max)
+const TELEGRAM_MAX_LENGTH = 4096; // Telegram message character limit
+// Active streams per chat — used to cancel when user sends a new message mid-generation
+const activeStreams = new Map<string, TelegramMessageStream>();
+
+/**
+ * Manages streaming a response into a Telegram message via edit-in-place.
+ * Buffers incoming tokens, flushes edits at intervals to respect rate limits.
+ */
+class TelegramMessageStream {
+  private chatId: number | string;
+  private messageId: number | null = null;
+  private replyToMessageId: number | undefined;
+  private content = "";
+  private pendingContent: string[] = [];
+  private flushTimer: NodeJS.Timeout | null = null;
+  private finalized = false;
+  private cancelled = false;
+  private processing = false;
+  private editFailed = false;
+
+  constructor(chatId: number | string, replyToMessageId?: number) {
+    this.chatId = chatId;
+    this.replyToMessageId = replyToMessageId;
+
+    // Start periodic flush
+    this.flushTimer = setInterval(() => this.processPending(), STREAM_FLUSH_INTERVAL_MS);
+  }
+
+  /** Cancel this stream (e.g. user sent a new message). */
+  cancel(): void {
+    this.cancelled = true;
+    this.cleanup();
+  }
+
+  /** Append text from a stream chunk. */
+  append(text: string): void {
+    if (this.finalized || this.cancelled) return;
+    this.pendingContent.push(text);
+  }
+
+  /** Drain pending chunks and edit the Telegram message. */
+  private async processPending(): Promise<void> {
+    if (this.processing || this.finalized || this.cancelled || this.pendingContent.length === 0) {
+      return;
+    }
+    this.processing = true;
+
+    try {
+      const batch = this.pendingContent.splice(0).join("");
+      if (!batch) return;
+
+      this.content += batch;
+
+      // Truncate display to Telegram limit (full content preserved for fallback)
+      const displayText = this.content.length > TELEGRAM_MAX_LENGTH
+        ? `${this.content.slice(0, TELEGRAM_MAX_LENGTH - 4)} ...`
+        : this.content;
+
+      if (!this.messageId) {
+        // Send initial message
+        await this.sendInitial(displayText);
+      } else {
+        // Edit existing message
+        await this.editMessage(displayText);
+      }
+    } catch (err) {
+      logger.error("Stream processPending error:", err);
+    } finally {
+      this.processing = false;
+    }
+  }
+
+  /** Send the initial placeholder or first content message. */
+  private async sendInitial(text: string): Promise<void> {
+    if (!bot) return;
+    try {
+      const result = await bot.api.sendMessage(this.chatId, text, {
+        reply_to_message_id: this.replyToMessageId,
+      });
+      this.messageId = result.message_id;
+      logger.debug(`Stream: sent initial message ${this.messageId} in chat ${this.chatId}`);
+    } catch (err) {
+      logger.error("Stream: failed to send initial message:", err);
+      this.editFailed = true;
+    }
+  }
+
+  /** Edit the in-place message with updated content. */
+  private async editMessage(text: string): Promise<void> {
+    if (!bot || !this.messageId || this.editFailed) return;
+    try {
+      await bot.api.editMessageText(this.chatId, this.messageId, text);
+    } catch (err: unknown) {
+      // "message is not modified" is not a real error — content unchanged
+      const errObj = err as { description?: string };
+      if (errObj?.description?.includes("message is not modified")) return;
+      logger.error("Stream: editMessageText failed:", err);
+      // If edit fails (e.g. rate limit), mark as failed so finalize sends complete message
+      this.editFailed = true;
+    }
+  }
+
+  /** Stop the flush timer. */
+  private cleanup(): void {
+    if (this.flushTimer) {
+      clearInterval(this.flushTimer);
+      this.flushTimer = null;
+    }
+  }
+
+  /**
+   * Finalize the stream — flush all remaining content.
+   * Returns the full accumulated content (for fallback if edits failed).
+   */
+  async finalize(): Promise<string> {
+    if (this.finalized) return this.content;
+    this.cleanup();
+
+    // Wait for any in-flight processing
+    if (this.processing) {
+      let waitCount = 0;
+      while (this.processing && waitCount < 50) {
+        await new Promise((r) => setTimeout(r, 100));
+        waitCount++;
+      }
+    }
+
+    this.finalized = true;
+
+    // Drain remaining pending content
+    if (this.pendingContent.length > 0) {
+      this.content += this.pendingContent.splice(0).join("");
+    }
+
+    if (this.cancelled) return this.content;
+
+    // Final edit with complete content
+    if (this.messageId && !this.editFailed && this.content) {
+      const displayText = this.content.length > TELEGRAM_MAX_LENGTH
+        ? `${this.content.slice(0, TELEGRAM_MAX_LENGTH - 4)} ...`
+        : this.content;
+      await this.editMessage(displayText);
+    }
+
+    return this.content;
+  }
+
+  /** Whether edits failed and we need to fall back to sending a complete message. */
+  get needsFallback(): boolean {
+    return this.editFailed;
+  }
+
+  /** Whether we never managed to send an initial message. */
+  get hasMessage(): boolean {
+    return this.messageId !== null;
+  }
+
+  /** The full accumulated content. */
+  get fullContent(): string {
+    return this.content;
+  }
+}
 
 // Initialize winston logger
 function initLogger(): winston.Logger {
@@ -357,7 +522,7 @@ async function handleMessage(grammyCtx: Context): Promise<void> {
   await injectMessage(text, user, chat, sessionKey, channelInfo, msg.message_id);
 }
 
-// Inject message to WOPR
+// Inject message to WOPR with streaming support
 async function injectMessage(
   text: string,
   user: any,
@@ -368,16 +533,63 @@ async function injectMessage(
 ): Promise<void> {
   if (!ctx) return;
 
+  const chatId = chat.id;
+  const streamKey = `${chatId}`;
+
+  // Cancel any active stream for this chat (user sent a new message mid-generation)
+  const existingStream = activeStreams.get(streamKey);
+  if (existingStream) {
+    logger.info(`Cancelling active stream for chat ${chatId} — new message received`);
+    existingStream.cancel();
+    activeStreams.delete(streamKey);
+  }
+
+  // Create a new stream for this response
+  const stream = new TelegramMessageStream(chatId, replyToMessageId);
+  activeStreams.set(streamKey, stream);
+
   const prefix = `[${user.first_name || user.username || "User"}]: `;
   const messageWithPrefix = prefix + (text || "[media]");
 
-  const response = await ctx.inject(sessionKey, messageWithPrefix, {
-    from: user.first_name || user.username || String(user.id),
-    channel: channelInfo,
-  });
+  try {
+    const response = await ctx.inject(sessionKey, messageWithPrefix, {
+      from: user.first_name || user.username || String(user.id),
+      channel: channelInfo,
+      onStream: (msg: StreamMessage) => {
+        if (msg.type === "text" || msg.type === "assistant") {
+          stream.append(msg.content);
+        }
+      },
+    });
 
-  // Send response
-  await sendMessage(chat.id, response, { replyToMessageId });
+    // Finalize the stream
+    await stream.finalize();
+    activeStreams.delete(streamKey);
+
+    // If streaming edits failed or no message was sent, fall back to complete send
+    if (stream.needsFallback || !stream.hasMessage) {
+      logger.info(`Stream fallback: sending complete message for chat ${chatId}`);
+      await sendMessage(chatId, response, { replyToMessageId });
+    } else if (response.length > TELEGRAM_MAX_LENGTH) {
+      // Response exceeded single message limit — send overflow as new messages
+      // The stream already shows the first 4096 chars; send the rest
+      const overflow = response.slice(TELEGRAM_MAX_LENGTH - 4);
+      if (overflow.trim()) {
+        await sendMessage(chatId, overflow);
+      }
+    }
+  } catch (err) {
+    // Finalize stream on error
+    await stream.finalize();
+    activeStreams.delete(streamKey);
+
+    // If we got some content streamed, the user already sees partial output.
+    // If not, re-throw so the caller can handle it.
+    if (!stream.hasMessage) {
+      throw err;
+    }
+    logger.error("Inject failed after partial stream:", err);
+  }
 }
 
 // Send message to Telegram
@@ -737,6 +949,12 @@ const plugin: WOPRPlugin = {
 
   async shutdown(): Promise<void> {
     isShuttingDown = true;
+
+    // Cancel all active streams
+    for (const [key, stream] of activeStreams) {
+      stream.cancel();
+    }
+    activeStreams.clear();
 
     if (bot) {
       logger.info("Stopping Telegram bot...");
