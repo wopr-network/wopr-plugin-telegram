@@ -5,6 +5,7 @@
 import fs, { createWriteStream, existsSync, mkdirSync } from "node:fs";
 import os from "node:os";
 import path from "node:path";
+import { Readable } from "node:stream";
 import { pipeline } from "node:stream/promises";
 import winston from "winston";
 import { Bot, type Context, InputFile } from "grammy";
@@ -360,9 +361,8 @@ function getAckReaction(): string {
   return agentIdentity.emoji?.trim() || "👀";
 }
 
-// Telegram Bot API file size limits
+// Telegram Bot API file size limit
 const TELEGRAM_DOWNLOAD_LIMIT_BYTES = 20 * 1024 * 1024; // 20MB download limit
-const TELEGRAM_UPLOAD_LIMIT_BYTES = 50 * 1024 * 1024; // 50MB upload limit
 
 // Attachments directory
 const ATTACHMENTS_DIR = existsSync("/data")
@@ -377,7 +377,7 @@ async function downloadTelegramFile(
   fileId: string,
   fileName: string,
   userId: string | number,
-): Promise<string | null> {
+): Promise<{ localPath: string; telegramFilePath: string } | null> {
   if (!bot) return null;
 
   try {
@@ -398,7 +398,7 @@ async function downloadTelegramFile(
     }
 
     // Check against user-configured max
-    const maxBytes = (config.mediaMaxMb || 20) * 1024 * 1024;
+    const maxBytes = (config.mediaMaxMb ?? 5) * 1024 * 1024;
     if (file.file_size && file.file_size > maxBytes) {
       logger.warn("File exceeds configured mediaMaxMb", {
         fileId,
@@ -434,14 +434,15 @@ async function downloadTelegramFile(
     }
 
     const fileStream = createWriteStream(localPath);
-    await pipeline(response.body as any, fileStream);
+    const nodeStream = Readable.fromWeb(response.body as import("node:stream/web").ReadableStream);
+    await pipeline(nodeStream, fileStream);
 
     logger.info("Telegram file saved", {
       filename: localName,
       size: file.file_size,
       fileId,
     });
-    return localPath;
+    return { localPath, telegramFilePath: file.file_path };
   } catch (err) {
     logger.error("Error downloading Telegram file", {
       fileId,
@@ -449,15 +450,6 @@ async function downloadTelegramFile(
     });
     return null;
   }
-}
-
-/**
- * Build the Telegram file download URL for a given file_path.
- * Used to pass image URLs directly to vision models.
- */
-function getTelegramFileUrl(filePath: string): string {
-  const token = resolveToken();
-  return `https://api.telegram.org/file/bot${token}/${filePath}`;
 }
 
 // Validate that a file path is within allowed directories to prevent arbitrary file read
@@ -636,25 +628,15 @@ async function handleMessage(grammyCtx: Context): Promise<void> {
   if (hasPhoto && msg.photo) {
     // Telegram sends multiple sizes; pick the largest (last in array)
     const largest = msg.photo[msg.photo.length - 1];
-    const filePath = await downloadTelegramFile(
+    const result = await downloadTelegramFile(
       largest.file_id,
       "photo.jpg",
       user.id,
     );
-    if (filePath) {
-      attachmentPaths.push(filePath);
-    }
-
-    // Also try to get a direct URL for vision models
-    if (bot) {
-      try {
-        const fileInfo = await bot.api.getFile(largest.file_id);
-        if (fileInfo.file_path) {
-          imageUrls.push(getTelegramFileUrl(fileInfo.file_path));
-        }
-      } catch {
-        // URL not critical; local file is enough
-      }
+    if (result) {
+      attachmentPaths.push(result.localPath);
+      // Pass local file path for vision models (avoids leaking bot token in URLs)
+      imageUrls.push(result.localPath);
     }
   }
 
@@ -667,17 +649,17 @@ async function handleMessage(grammyCtx: Context): Promise<void> {
       });
       return;
     }
-    const maxBytes = (config.mediaMaxMb || 20) * 1024 * 1024;
+    const maxBytes = (config.mediaMaxMb ?? 5) * 1024 * 1024;
     if (doc.file_size && doc.file_size > maxBytes) {
-      await sendMessage(chat.id, `Sorry, that file exceeds the configured size limit of ${config.mediaMaxMb || 20}MB.`, {
+      await sendMessage(chat.id, `Sorry, that file exceeds the configured size limit of ${config.mediaMaxMb ?? 5}MB.`, {
         replyToMessageId: msg.message_id,
       });
       return;
     }
     const fileName = doc.file_name || "document";
-    const filePath = await downloadTelegramFile(doc.file_id, fileName, user.id);
-    if (filePath) {
-      attachmentPaths.push(filePath);
+    const result = await downloadTelegramFile(doc.file_id, fileName, user.id);
+    if (result) {
+      attachmentPaths.push(result.localPath);
     }
   }
 
@@ -690,13 +672,20 @@ async function handleMessage(grammyCtx: Context): Promise<void> {
       });
       return;
     }
-    const filePath = await downloadTelegramFile(
+    const voiceMaxBytes = (config.mediaMaxMb ?? 5) * 1024 * 1024;
+    if (voice.file_size && voice.file_size > voiceMaxBytes) {
+      await sendMessage(chat.id, `Sorry, that voice message exceeds the configured size limit of ${config.mediaMaxMb ?? 5}MB.`, {
+        replyToMessageId: msg.message_id,
+      });
+      return;
+    }
+    const result = await downloadTelegramFile(
       voice.file_id,
       "voice.ogg",
       user.id,
     );
-    if (filePath) {
-      attachmentPaths.push(filePath);
+    if (result) {
+      attachmentPaths.push(result.localPath);
     }
   }
 
@@ -829,7 +818,15 @@ async function sendPhoto(
 ): Promise<void> {
   if (!bot) throw new Error("Telegram bot not initialized");
 
-  const input = Buffer.isBuffer(photo) ? new InputFile(photo) : photo;
+  let input: InputFile | string;
+  if (Buffer.isBuffer(photo)) {
+    input = new InputFile(photo);
+  } else if (photo.startsWith("http://") || photo.startsWith("https://")) {
+    input = photo;
+  } else {
+    // Local file path
+    input = new InputFile(fs.createReadStream(photo), path.basename(photo));
+  }
   try {
     await bot.api.sendPhoto(chatId, input, {
       caption,
