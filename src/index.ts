@@ -3,12 +3,13 @@
  */
 
 import fs, { createWriteStream, existsSync, mkdirSync } from "node:fs";
+import http from "node:http";
 import os from "node:os";
 import path from "node:path";
 import { Readable } from "node:stream";
 import { pipeline } from "node:stream/promises";
 import winston from "winston";
-import { Bot, type Context, InputFile } from "grammy";
+import { Bot, type Context, InputFile, webhookCallback } from "grammy";
 import { autoRetry } from "@grammyjs/auto-retry";
 import type {
   WOPRPlugin,
@@ -35,6 +36,8 @@ interface TelegramConfig {
   webhookPort?: number;
   maxRetries?: number;
   retryMaxDelay?: number;
+  webhookPath?: string;
+  webhookSecret?: string;
 }
 
 // Module-level state
@@ -42,6 +45,8 @@ let ctx: WOPRPluginContext | null = null;
 let config: TelegramConfig = {};
 let agentIdentity: AgentIdentity = { name: "WOPR", emoji: "👀" };
 let bot: Bot | null = null;
+let webhookServer: http.Server | null = null;
+let isShuttingDown = false;
 let logger: winston.Logger;
 
 // Streaming constants
@@ -339,6 +344,20 @@ const configSchema: ConfigSchema = {
       placeholder: "30",
       default: 30,
       description: "Maximum delay to wait for rate-limited retries",
+    },
+    {
+      name: "webhookPath",
+      type: "text",
+      label: "Webhook Path",
+      placeholder: "/telegram",
+      description: "URL path for webhook endpoint (default: /telegram)",
+    },
+    {
+      name: "webhookSecret",
+      type: "password",
+      label: "Webhook Secret",
+      placeholder: "random-secret-string",
+      description: "Secret token for validating webhook requests from Telegram",
     },
   ],
 };
@@ -1177,6 +1196,49 @@ function registerCommandHandlers(botInstance: Bot): void {
   });
 }
 
+// Start the bot in webhook mode
+async function startWebhook(botInstance: Bot): Promise<void> {
+  const webhookUrl = config.webhookUrl || "";
+  const port = config.webhookPort || 3000;
+  const webhookPath = config.webhookPath || "/telegram";
+  const secret = config.webhookSecret;
+
+  // Initialize bot (fetch bot info) without starting polling
+  await botInstance.init();
+
+  // Create webhook handler using grammY's built-in adapter
+  const handleUpdate = webhookCallback(botInstance, "http", {
+    secretToken: secret,
+  });
+
+  // Create HTTP server
+  const server = http.createServer((req, res) => {
+    if (req.method === "POST" && req.url === webhookPath) {
+      handleUpdate(req, res);
+    } else {
+      res.writeHead(404);
+      res.end();
+    }
+  });
+  webhookServer = server;
+
+  // Start listening
+  await new Promise<void>((resolve, reject) => {
+    server.listen(port, () => {
+      logger.info(`Webhook server listening on port ${port} at path ${webhookPath}`);
+      resolve();
+    });
+    server.once("error", reject);
+  });
+
+  // Register webhook with Telegram
+  await botInstance.api.setWebhook(webhookUrl, {
+    secret_token: secret,
+  });
+
+  logger.info(`Webhook registered with Telegram: ${webhookUrl}`);
+}
+
 // Start the bot
 async function startBot(): Promise<void> {
   const token = resolveToken();
@@ -1231,11 +1293,26 @@ async function startBot(): Promise<void> {
 
   // Start bot
   if (config.webhookUrl) {
-    // Webhook mode
+    // Webhook mode — fall back to polling on failure
     logger.info(`Starting Telegram bot with webhook: ${config.webhookUrl}`);
-    // Note: Webhook server setup would be more complex
-    // For now, just use polling
-    await bot.start();
+    try {
+      await startWebhook(bot);
+    } catch (err) {
+      logger.error("Webhook setup failed, falling back to polling:", err);
+      // Clean up partial webhook state
+      if (webhookServer) {
+        webhookServer.close();
+        webhookServer = null;
+      }
+      try {
+        await bot.api.deleteWebhook();
+      } catch {
+        // Ignore — may not have been set
+      }
+      await bot.start();
+      logger.info("Telegram bot started in polling mode (fallback)");
+      return;
+    }
   } else {
     // Polling mode
     logger.info("Starting Telegram bot with polling...");
@@ -1289,8 +1366,26 @@ const plugin: WOPRPlugin = {
     }
     activeStreams.clear();
 
+    // Close webhook server if running
+    if (webhookServer) {
+      logger.info("Stopping webhook server...");
+      const server = webhookServer;
+      await new Promise<void>((resolve) => {
+        server.close(() => resolve());
+      });
+      webhookServer = null;
+    }
+
     if (bot) {
       logger.info("Stopping Telegram bot...");
+      // Delete webhook registration if we were in webhook mode
+      if (config.webhookUrl) {
+        try {
+          await bot.api.deleteWebhook();
+        } catch {
+          // Ignore errors during shutdown
+        }
+      }
       await bot.stop();
       bot = null;
     }
