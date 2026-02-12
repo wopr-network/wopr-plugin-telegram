@@ -39,14 +39,15 @@ let ctx: WOPRPluginContext | null = null;
 let config: TelegramConfig = {};
 let agentIdentity: AgentIdentity = { name: "WOPR", emoji: "👀" };
 let bot: Bot | null = null;
-let isShuttingDown = false;
 let logger: winston.Logger;
 
 // Streaming constants
 const STREAM_FLUSH_INTERVAL_MS = 2000; // Flush edits every 2s (~30 edits/min max)
 const TELEGRAM_MAX_LENGTH = 4096; // Telegram message character limit
-// Active streams per chat — used to cancel when user sends a new message mid-generation
-const activeStreams = new Map<string, TelegramMessageStream>();
+// Active streams keyed by unique stream ID — prevents race conditions when
+// a new stream starts for the same chat before the old one's cleanup runs.
+let streamIdCounter = 0;
+const activeStreams = new Map<string, { streamId: number; stream: TelegramMessageStream }>();
 
 /**
  * Manages streaming a response into a Telegram message via edit-in-place.
@@ -135,7 +136,9 @@ class TelegramMessageStream {
   private async editMessage(text: string): Promise<void> {
     if (!bot || !this.messageId || this.editFailed) return;
     try {
-      await bot.api.editMessageText(this.chatId, this.messageId, text);
+      await bot.api.editMessageText(this.chatId, this.messageId, text, {
+        parse_mode: "Markdown",
+      });
     } catch (err: unknown) {
       // "message is not modified" is not a real error — content unchanged
       const errObj = err as { description?: string };
@@ -537,16 +540,17 @@ async function injectMessage(
   const streamKey = `${chatId}`;
 
   // Cancel any active stream for this chat (user sent a new message mid-generation)
-  const existingStream = activeStreams.get(streamKey);
-  if (existingStream) {
+  const existing = activeStreams.get(streamKey);
+  if (existing) {
     logger.info(`Cancelling active stream for chat ${chatId} — new message received`);
-    existingStream.cancel();
+    existing.stream.cancel();
     activeStreams.delete(streamKey);
   }
 
-  // Create a new stream for this response
+  // Create a new stream with a unique ID to guard against race conditions
   const stream = new TelegramMessageStream(chatId, replyToMessageId);
-  activeStreams.set(streamKey, stream);
+  const currentStreamId = ++streamIdCounter;
+  activeStreams.set(streamKey, { streamId: currentStreamId, stream });
 
   const prefix = `[${user.first_name || user.username || "User"}]: `;
   const messageWithPrefix = prefix + (text || "[media]");
@@ -564,7 +568,10 @@ async function injectMessage(
 
     // Finalize the stream
     await stream.finalize();
-    activeStreams.delete(streamKey);
+    // Only delete if this stream is still the active one (guards against race condition)
+    if (activeStreams.get(streamKey)?.streamId === currentStreamId) {
+      activeStreams.delete(streamKey);
+    }
 
     // If streaming edits failed or no message was sent, fall back to complete send
     if (stream.needsFallback || !stream.hasMessage) {
@@ -572,7 +579,8 @@ async function injectMessage(
       await sendMessage(chatId, response, { replyToMessageId });
     } else if (response.length > TELEGRAM_MAX_LENGTH) {
       // Response exceeded single message limit — send overflow as new messages
-      // The stream already shows the first 4096 chars; send the rest
+      // The stream truncated display at (TELEGRAM_MAX_LENGTH - 4) then appended " ...",
+      // so the user has seen content[0..4092]. Send remaining content from that point.
       const overflow = response.slice(TELEGRAM_MAX_LENGTH - 4);
       if (overflow.trim()) {
         await sendMessage(chatId, overflow);
@@ -581,7 +589,9 @@ async function injectMessage(
   } catch (err) {
     // Finalize stream on error
     await stream.finalize();
-    activeStreams.delete(streamKey);
+    if (activeStreams.get(streamKey)?.streamId === currentStreamId) {
+      activeStreams.delete(streamKey);
+    }
 
     // If we got some content streamed, the user already sees partial output.
     // If not, re-throw so the caller can handle it.
@@ -616,7 +626,7 @@ async function sendMessage(
   if (text.length <= maxLength) {
     chunks.push(text);
   } else {
-    // Split by sentences
+    // Split by sentences first, then hard-split any oversized pieces
     let current = "";
     const sentences = text.split(/(?<=[.!?])\s+/);
     for (const sentence of sentences) {
@@ -624,7 +634,19 @@ async function sendMessage(
         current += (current ? " " : "") + sentence;
       } else {
         if (current) chunks.push(current);
-        current = sentence;
+        // Hard-split sentences that exceed maxLength on their own
+        if (sentence.length > maxLength) {
+          for (let j = 0; j < sentence.length; j += maxLength) {
+            const piece = sentence.slice(j, j + maxLength);
+            if (j + maxLength < sentence.length) {
+              chunks.push(piece);
+            } else {
+              current = piece;
+            }
+          }
+        } else {
+          current = sentence;
+        }
       }
     }
     if (current) chunks.push(current);
@@ -633,7 +655,6 @@ async function sendMessage(
   // Send chunks
   for (let i = 0; i < chunks.length; i++) {
     const chunk = chunks[i];
-    const isLast = i === chunks.length - 1;
 
     const params: any = {
       chat_id: chatId,
@@ -948,10 +969,8 @@ const plugin: WOPRPlugin = {
   },
 
   async shutdown(): Promise<void> {
-    isShuttingDown = true;
-
     // Cancel all active streams
-    for (const [key, stream] of activeStreams) {
+    for (const [, { stream }] of activeStreams) {
       stream.cancel();
     }
     activeStreams.clear();
