@@ -2,6 +2,7 @@
  * WOPR Telegram Plugin - Grammy-based Telegram Bot integration
  */
 
+import crypto from "node:crypto";
 import fs, { createWriteStream, existsSync, mkdirSync } from "node:fs";
 import http from "node:http";
 import os from "node:os";
@@ -1201,7 +1202,15 @@ async function startWebhook(botInstance: Bot): Promise<void> {
   const webhookUrl = config.webhookUrl || "";
   const port = config.webhookPort || 3000;
   const webhookPath = config.webhookPath || "/telegram";
-  const secret = config.webhookSecret;
+  let secret = config.webhookSecret;
+  if (!secret) {
+    secret = crypto.randomBytes(32).toString("hex");
+    logger.warn(
+      "webhookSecret not configured — auto-generated a random secret. " +
+        "This secret will not persist across restarts. " +
+        "Set webhookSecret in your plugin config for stable authentication.",
+    );
+  }
 
   // Initialize bot (fetch bot info) without starting polling
   await botInstance.init();
