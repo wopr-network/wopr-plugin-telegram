@@ -31,7 +31,6 @@ interface TelegramConfig {
   webhookUrl?: string;
   webhookPort?: number;
   maxRetries?: number;
-  retryBaseDelay?: number;
   retryMaxDelay?: number;
 }
 
@@ -643,16 +642,20 @@ async function startBot(): Promise<void> {
 
   // Install auto-retry transformer for exponential backoff on failed API calls
   const maxRetryAttempts = config.maxRetries ?? 3;
-  const maxDelaySeconds = config.retryMaxDelay ?? 30;
-  bot.api.config.use(autoRetry({
-    maxRetryAttempts,
-    maxDelaySeconds,
-    rethrowInternalServerErrors: false,
-    rethrowHttpErrors: false,
-  }));
-  logger.info(
-    `Auto-retry enabled: maxRetryAttempts=${maxRetryAttempts}, maxDelaySeconds=${maxDelaySeconds}`
-  );
+  if (maxRetryAttempts > 0) {
+    const maxDelaySeconds = config.retryMaxDelay ?? 30;
+    bot.api.config.use(autoRetry({
+      maxRetryAttempts,
+      maxDelaySeconds,
+      rethrowInternalServerErrors: false,
+      rethrowHttpErrors: false,
+    }));
+    logger.info(
+      `Auto-retry enabled: maxRetryAttempts=${maxRetryAttempts}, maxDelaySeconds=${maxDelaySeconds}`
+    );
+  } else {
+    logger.info("Auto-retry disabled (maxRetries=0)");
+  }
 
   // Error handler
   bot.catch((err) => {
