@@ -313,8 +313,8 @@ async function handleMessage(grammyCtx: Context): Promise<void> {
     channel: channelInfo,
   };
 
-  const sessionKey = `telegram-${chat.id}`;
-  
+  const sessionKey = isGroup ? `telegram-group:${chat.id}` : `telegram-dm:${user.id}`;
+
   // Log the incoming message
   if (ctx) {
     ctx.logMessage(sessionKey, text || "[media]", logOptions);
@@ -427,6 +427,190 @@ async function sendMessage(
   }
 }
 
+// Bot command definitions for BotFather menu
+const botCommands = [
+  { command: "ask", description: "Ask WOPR a question" },
+  { command: "model", description: "Switch AI model (e.g. /model gpt-4o)" },
+  { command: "session", description: "Switch to a named session" },
+  { command: "status", description: "Show current session status" },
+  { command: "claim", description: "Claim bot ownership with pairing code" },
+  { command: "help", description: "Show available commands" },
+];
+
+// Helper to get session key from a grammY context
+function getSessionKey(grammyCtx: Context): string {
+  const chat = grammyCtx.chat;
+  const user = grammyCtx.from;
+  if (!chat || !user) return "telegram-unknown";
+  const isGroup = chat.type === "group" || chat.type === "supergroup";
+  return isGroup ? `telegram-group:${chat.id}` : `telegram-dm:${user.id}`;
+}
+
+// Helper to get channel info from a grammY context
+function getChannelInfo(grammyCtx: Context): ChannelInfo {
+  const chat = grammyCtx.chat;
+  const user = grammyCtx.from;
+  if (!chat || !user) return { type: "telegram", id: "unknown" };
+  const isGroup = chat.type === "group" || chat.type === "supergroup";
+  const channelId = isGroup ? `group:${chat.id}` : `dm:${user.id}`;
+  return {
+    type: "telegram",
+    id: channelId,
+    name: chat.title || user.first_name || "Telegram",
+  };
+}
+
+// Helper to get display name from a grammY context
+function getDisplayName(grammyCtx: Context): string {
+  const user = grammyCtx.from;
+  if (!user) return "User";
+  return user.first_name || user.username || String(user.id);
+}
+
+// Inject a command to WOPR and reply with the response
+async function injectCommandMessage(
+  grammyCtx: Context,
+  message: string,
+): Promise<void> {
+  if (!ctx || !grammyCtx.chat) {
+    await grammyCtx.reply("Bot is not connected to WOPR.");
+    return;
+  }
+
+  const sessionKey = getSessionKey(grammyCtx);
+  const channelInfo = getChannelInfo(grammyCtx);
+  const from = getDisplayName(grammyCtx);
+  const prefix = `[${from}]: `;
+
+  ctx.logMessage(sessionKey, message, { from, channel: channelInfo });
+
+  try {
+    const response = await ctx.inject(sessionKey, prefix + message, {
+      from,
+      channel: channelInfo,
+    });
+    await sendMessage(grammyCtx.chat.id, response, {
+      replyToMessageId: grammyCtx.message?.message_id,
+    });
+  } catch (err) {
+    logger.error("Failed to inject command message:", err);
+    await grammyCtx.reply("An error occurred processing your request.");
+  }
+}
+
+// Check authorization for a command handler; returns true if blocked
+async function checkCommandAuth(grammyCtx: Context): Promise<boolean> {
+  const user = grammyCtx.from;
+  const chat = grammyCtx.chat;
+  if (!user || !chat) return true;
+  const isGroup = chat.type === "group" || chat.type === "supergroup";
+  if (!isAllowed(String(user.id), user.username, isGroup)) {
+    logger.info(`Command from ${user.id} blocked by policy`);
+    return true;
+  }
+  return false;
+}
+
+// Register command handlers on the bot instance
+function registerCommandHandlers(botInstance: Bot): void {
+  // /ask <question> - Ask WOPR a question
+  botInstance.command("ask", async (grammyCtx) => {
+    if (await checkCommandAuth(grammyCtx)) return;
+    const question = typeof grammyCtx.match === "string" ? grammyCtx.match.trim() : "";
+    if (!question) {
+      await grammyCtx.reply("Usage: /ask <your question>\n\nExample: /ask What is the meaning of life?");
+      return;
+    }
+    await injectCommandMessage(grammyCtx, question);
+  });
+
+  // /model <name> - Switch AI model
+  botInstance.command("model", async (grammyCtx) => {
+    if (await checkCommandAuth(grammyCtx)) return;
+    const modelName = typeof grammyCtx.match === "string" ? grammyCtx.match.trim() : "";
+    if (!modelName) {
+      await grammyCtx.reply("Usage: /model <model-name>\n\nExample: /model gpt-4o\nExample: /model opus");
+      return;
+    }
+    await injectCommandMessage(grammyCtx, `/model ${modelName}`);
+  });
+
+  // /session <name> - Switch to a named session
+  botInstance.command("session", async (grammyCtx) => {
+    if (await checkCommandAuth(grammyCtx)) return;
+    const sessionName = typeof grammyCtx.match === "string" ? grammyCtx.match.trim() : "";
+    if (!sessionName) {
+      await grammyCtx.reply("Usage: /session <name>\n\nExample: /session project-alpha");
+      return;
+    }
+    await injectCommandMessage(grammyCtx, `/session ${sessionName}`);
+  });
+
+  // /status - Show session status
+  botInstance.command("status", async (grammyCtx) => {
+    if (await checkCommandAuth(grammyCtx)) return;
+    if (!ctx || !grammyCtx.chat) {
+      await grammyCtx.reply("Bot is not connected to WOPR.");
+      return;
+    }
+    const sessionKey = getSessionKey(grammyCtx);
+    const sessions = ctx.getSessions();
+    const isActive = sessions.includes(sessionKey);
+
+    const identity = agentIdentity;
+    const statusLines = [
+      `<b>Session Status</b>`,
+      ``,
+      `<b>Bot:</b> ${identity.name || "WOPR"}`,
+      `<b>Session:</b> <code>${sessionKey}</code>`,
+      `<b>Active:</b> ${isActive ? "Yes" : "No"}`,
+      `<b>Active Sessions:</b> ${sessions.length}`,
+    ];
+    await sendMessage(grammyCtx.chat.id, statusLines.join("\n"), {
+      replyToMessageId: grammyCtx.message?.message_id,
+    });
+  });
+
+  // /claim <code> - Claim bot ownership
+  botInstance.command("claim", async (grammyCtx) => {
+    if (await checkCommandAuth(grammyCtx)) return;
+    const chat = grammyCtx.chat;
+    if (!chat) return;
+    const isGroup = chat.type === "group" || chat.type === "supergroup";
+    if (isGroup) {
+      await grammyCtx.reply("The /claim command only works in DMs. Please DM me to claim ownership.");
+      return;
+    }
+    const code = typeof grammyCtx.match === "string" ? grammyCtx.match.trim() : "";
+    if (!code) {
+      await grammyCtx.reply("Usage: /claim <pairing-code>\n\nExample: /claim ABC123");
+      return;
+    }
+    await injectCommandMessage(grammyCtx, `/claim ${code}`);
+  });
+
+  // /help - Show available commands
+  botInstance.command("help", async (grammyCtx) => {
+    if (await checkCommandAuth(grammyCtx)) return;
+    if (!grammyCtx.chat) return;
+    const helpText = [
+      `<b>WOPR Telegram Commands</b>`,
+      ``,
+      `/ask &lt;question&gt; - Ask WOPR a question`,
+      `/model &lt;name&gt; - Switch AI model (e.g. opus, haiku, gpt-4o)`,
+      `/session &lt;name&gt; - Switch to a named session`,
+      `/status - Show current session status`,
+      `/claim &lt;code&gt; - Claim bot ownership (DM only)`,
+      `/help - Show this help`,
+      ``,
+      `You can also mention me or reply to my messages to chat.`,
+    ];
+    await sendMessage(grammyCtx.chat.id, helpText.join("\n"), {
+      replyToMessageId: grammyCtx.message?.message_id,
+    });
+  });
+}
+
 // Start the bot
 async function startBot(): Promise<void> {
   const token = resolveToken();
@@ -442,10 +626,21 @@ async function startBot(): Promise<void> {
     logger.error("Telegram bot error:", err);
   });
 
-  // Message handler
-  bot.on("message", async (ctx) => {
+  // Register command handlers before the generic message handler
+  registerCommandHandlers(bot);
+
+  // Register commands with BotFather for the "/" menu
+  try {
+    await bot.api.setMyCommands(botCommands);
+    logger.info("Registered bot commands with BotFather");
+  } catch (err) {
+    logger.warn("Failed to register bot commands:", err);
+  }
+
+  // Message handler (catches non-command messages)
+  bot.on("message", async (grammyCtx) => {
     try {
-      await handleMessage(ctx);
+      await handleMessage(grammyCtx);
     } catch (err) {
       logger.error("Error handling Telegram message:", err);
     }
