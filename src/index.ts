@@ -11,6 +11,7 @@ import { Readable } from "node:stream";
 import { pipeline } from "node:stream/promises";
 import winston from "winston";
 import { Bot, type Context, InputFile, webhookCallback } from "grammy";
+import type { ReactionTypeEmoji } from "@grammyjs/types";
 import { autoRetry } from "@grammyjs/auto-retry";
 import type {
   WOPRPlugin,
@@ -39,6 +40,7 @@ interface TelegramConfig {
   retryMaxDelay?: number;
   webhookPath?: string;
   webhookSecret?: string;
+  ackReaction?: string;
 }
 
 // Module-level state
@@ -360,6 +362,13 @@ const configSchema: ConfigSchema = {
       placeholder: "random-secret-string",
       description: "Secret token for validating webhook requests from Telegram",
     },
+    {
+      name: "ackReaction",
+      type: "text",
+      label: "Acknowledgment Reaction",
+      placeholder: "\u{1F440}",
+      description: "Emoji reaction sent on incoming messages to acknowledge receipt (must be a standard Telegram reaction emoji)",
+    },
   ],
 };
 
@@ -377,8 +386,31 @@ async function refreshIdentity(): Promise<void> {
   }
 }
 
+// All emoji strings that Telegram accepts for bot reactions (Bot API 8.0+).
+// This set mirrors the ReactionTypeEmoji["emoji"] union from @grammyjs/types.
+const STANDARD_REACTIONS: ReadonlySet<string> = new Set<ReactionTypeEmoji["emoji"]>([
+  "\u{1F44D}", "\u{1F44E}", "\u{2764}", "\u{1F525}", "\u{1F970}", "\u{1F44F}",
+  "\u{1F601}", "\u{1F914}", "\u{1F92F}", "\u{1F631}", "\u{1F92C}", "\u{1F622}",
+  "\u{1F389}", "\u{1F929}", "\u{1F92E}", "\u{1F4A9}", "\u{1F64F}", "\u{1F44C}",
+  "\u{1F54A}", "\u{1F921}", "\u{1F971}", "\u{1F974}", "\u{1F60D}", "\u{1F433}",
+  "\u{2764}\u{200D}\u{1F525}", "\u{1F31A}", "\u{1F32D}", "\u{1F4AF}", "\u{1F923}",
+  "\u{26A1}", "\u{1F34C}", "\u{1F3C6}", "\u{1F494}", "\u{1F928}", "\u{1F610}",
+  "\u{1F353}", "\u{1F37E}", "\u{1F48B}", "\u{1F595}", "\u{1F608}", "\u{1F634}",
+  "\u{1F62D}", "\u{1F913}", "\u{1F47B}", "\u{1F468}\u{200D}\u{1F4BB}", "\u{1F440}",
+  "\u{1F383}", "\u{1F648}", "\u{1F607}", "\u{1F628}", "\u{1F91D}", "\u{270D}",
+  "\u{1F917}", "\u{1FAE1}", "\u{1F385}", "\u{1F384}", "\u{2603}", "\u{1F485}",
+  "\u{1F92A}", "\u{1F5FF}", "\u{1F192}", "\u{1F498}", "\u{1F649}", "\u{1F984}",
+  "\u{1F618}", "\u{1F48A}", "\u{1F64A}", "\u{1F60E}", "\u{1F47E}",
+  "\u{1F937}\u{200D}\u{2642}", "\u{1F937}", "\u{1F937}\u{200D}\u{2640}", "\u{1F621}",
+]);
+
+function isStandardReaction(emoji: string): emoji is ReactionTypeEmoji["emoji"] {
+  return STANDARD_REACTIONS.has(emoji);
+}
+
 function getAckReaction(): string {
-  return agentIdentity.emoji?.trim() || "👀";
+  // Config override takes priority, then agent identity emoji, then default
+  return config.ackReaction?.trim() || agentIdentity.emoji?.trim() || "\u{1F440}";
 }
 
 // Telegram Bot API file size limit
@@ -627,18 +659,16 @@ async function handleMessage(grammyCtx: Context): Promise<void> {
     ctx.logMessage(sessionKey, text || "[media]", logOptions);
   }
 
-  // Send reaction (if message supports it)
+  // Send acknowledgment reaction (Bot API 8.0+ — reactions on most message types)
   try {
     if (msg.message_id) {
       const reaction = getAckReaction();
-      // Use standard emoji reactions only
-      const standardReactions = ["👀", "👍", "👎", "❤", "🔥", "🥰", "👏", "😁", "🤔", "🤯", "😱", "🤬", "😢", "🎉", "🤩", "🤮", "💩", "🙏", "👌", "🕊", "🤡", "🥱", "🥴", "😍", "🐳", "❤‍🔥", "🌚", "🌭", "💯", "🤣", "⚡", "🍌", "🏆", "💔", "🤨", "😐", "🍓", "🍾", "💋", "🖕", "😈", "😴", "😭", "🤓", "👻", "👨‍💻", "👀", "🎃", "🙈", "😇", "😨", "🤝", "✍", "🤗", "🫡", "🎅", "🎄", "☃", "💅", "🤪", "🗿", "🆒", "💘", "🙉", "🦄", "😘", "💊", "🙊", "😎", "👾", "🤷‍♂", "🤷", "🤷‍♀", "😡"];
-      if (standardReactions.includes(reaction)) {
-        await grammyCtx.react(reaction as any).catch(() => {});
+      if (isStandardReaction(reaction)) {
+        await grammyCtx.react(reaction).catch(() => {});
       }
     }
   } catch {
-    // Reactions may not be supported
+    // Reactions may not be supported in this chat type
   }
 
   // Process media attachments
@@ -1403,5 +1433,5 @@ const plugin: WOPRPlugin = {
   },
 };
 
-export { validateTokenFilePath, downloadTelegramFile, sendPhoto, sendDocument };
+export { validateTokenFilePath, downloadTelegramFile, sendPhoto, sendDocument, STANDARD_REACTIONS, isStandardReaction };
 export default plugin;
