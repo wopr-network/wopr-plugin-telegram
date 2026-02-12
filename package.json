@@ -1,6 +1,7 @@
 {
   "author": "TSavo",
   "dependencies": {
+    "@grammyjs/auto-retry": "^2.0.2",
     "grammy": "^1.21.1",
     "winston": "^3.11.0"
   },
