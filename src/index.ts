@@ -35,6 +35,7 @@ import {
   parseCallbackData,
   CB_PREFIX,
 } from "./keyboards.js";
+import { createTelegramExtension } from "./telegram-extension.js";
 
 // Telegram config interface
 interface TelegramConfig {
@@ -1726,6 +1727,13 @@ const plugin: WOPRPlugin = {
       logger.info("Registered Telegram channel provider");
     }
 
+    // Register the Telegram extension so other plugins and daemon routes can access status
+    if (ctx.registerExtension) {
+      const extension = createTelegramExtension(() => bot, () => ctx);
+      ctx.registerExtension("telegram", extension);
+      logger.info("Registered Telegram extension");
+    }
+
     // Refresh identity
     await refreshIdentity();
 
@@ -1755,6 +1763,11 @@ const plugin: WOPRPlugin = {
     // Unregister channel provider
     if (ctx?.unregisterChannelProvider) {
       ctx.unregisterChannelProvider("telegram");
+    }
+
+    // Unregister extension
+    if (ctx?.unregisterExtension) {
+      ctx.unregisterExtension("telegram");
     }
 
     // Cancel all active streams
@@ -1793,4 +1806,8 @@ const plugin: WOPRPlugin = {
 
 export { validateTokenFilePath, downloadTelegramFile, sendPhoto, sendDocument, STANDARD_REACTIONS, isStandardReaction, telegramChannelProvider };
 export { buildMainKeyboard, buildModelKeyboard, buildSessionKeyboard, parseCallbackData, CB_PREFIX } from "./keyboards.js";
+export { createTelegramExtension } from "./telegram-extension.js";
+export type { TelegramExtension, TelegramStatusInfo, TelegramChatInfo, TelegramMessageStatsInfo } from "./telegram-extension.js";
+export { registerTelegramTools } from "./webmcp-telegram.js";
+export type { WebMCPRegistry, WebMCPTool, AuthContext } from "./webmcp-telegram.js";
 export default plugin;
