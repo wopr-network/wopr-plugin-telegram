@@ -21,6 +21,12 @@ import type {
   AgentIdentity,
   ChannelRef,
   PluginInjectOptions,
+  ChannelCommand,
+  ChannelCommandContext,
+  ChannelMessageContext,
+  ChannelMessageParser,
+  ChannelProvider,
+  PluginManifest,
 } from "@wopr-network/plugin-types";
 
 // Telegram config interface
@@ -420,6 +426,58 @@ const ATTACHMENTS_DIR = existsSync("/data")
   ? "/data/attachments"
   : path.join(process.cwd(), "attachments");
 
+// ============================================================================
+// Channel Provider (cross-plugin command/parser registration)
+// ============================================================================
+
+const registeredCommands: Map<string, ChannelCommand> = new Map();
+const registeredParsers: Map<string, ChannelMessageParser> = new Map();
+
+/**
+ * Telegram Channel Provider — allows other plugins to register commands and
+ * message parsers on the Telegram channel, mirroring the Discord pattern.
+ */
+const telegramChannelProvider: ChannelProvider = {
+  id: "telegram",
+
+  registerCommand(cmd: ChannelCommand): void {
+    registeredCommands.set(cmd.name, cmd);
+    logger?.info(`Channel command registered: ${cmd.name}`);
+  },
+
+  unregisterCommand(name: string): void {
+    registeredCommands.delete(name);
+  },
+
+  getCommands(): ChannelCommand[] {
+    return Array.from(registeredCommands.values());
+  },
+
+  addMessageParser(parser: ChannelMessageParser): void {
+    registeredParsers.set(parser.id, parser);
+    logger?.info(`Message parser registered: ${parser.id}`);
+  },
+
+  removeMessageParser(id: string): void {
+    registeredParsers.delete(id);
+  },
+
+  getMessageParsers(): ChannelMessageParser[] {
+    return Array.from(registeredParsers.values());
+  },
+
+  async send(channel: string, content: string): Promise<void> {
+    if (!bot) throw new Error("Telegram bot not initialized");
+    // Channel ID may be a raw chat ID or prefixed (dm:123, group:456)
+    const chatId = channel.replace(/^(dm|group):/, "");
+    await sendMessage(chatId, content);
+  },
+
+  getBotUsername(): string {
+    return bot?.botInfo?.username || "unknown";
+  },
+};
+
 /**
  * Download a file from Telegram's servers using the Bot API.
  * Returns the local file path on success, or null on failure.
@@ -635,6 +693,62 @@ async function handleMessage(grammyCtx: Context): Promise<void> {
 
   if (!text && !hasMedia) {
     return; // Skip empty messages without media
+  }
+
+  // Dispatch cross-plugin registered commands (e.g., from P2P plugin)
+  if (text && text.startsWith("/")) {
+    const parts = text.slice(1).split(/\s+/);
+    const cmdName = parts[0]?.toLowerCase();
+    const cmd = cmdName ? registeredCommands.get(cmdName) : undefined;
+    if (cmd) {
+      const channelId = isGroup ? `group:${chat.id}` : `dm:${user.id}`;
+      const cmdCtx: ChannelCommandContext = {
+        channel: channelId,
+        channelType: "telegram",
+        sender: user.username || String(user.id),
+        args: parts.slice(1),
+        reply: async (msg: string) => {
+          await sendMessage(chat.id, msg, { replyToMessageId: grammyCtx.message?.message_id });
+        },
+        getBotUsername: () => bot?.botInfo?.username || "unknown",
+      };
+      try {
+        await cmd.handler(cmdCtx);
+      } catch (err) {
+        logger.error(`Cross-plugin command /${cmdName} failed:`, err);
+        await sendMessage(chat.id, "An error occurred while processing that command.", { replyToMessageId: grammyCtx.message?.message_id });
+      }
+      return;
+    }
+  }
+
+  // Run cross-plugin message parsers
+  if (text) {
+    for (const parser of registeredParsers.values()) {
+      const matches = typeof parser.pattern === "function"
+        ? parser.pattern(text)
+        : parser.pattern.test(text);
+      if (matches) {
+        const channelId = isGroup ? `group:${chat.id}` : `dm:${user.id}`;
+        const parserCtx: ChannelMessageContext = {
+          channel: channelId,
+          channelType: "telegram",
+          sender: user.username || String(user.id),
+          content: text,
+          reply: async (msg: string) => {
+            await sendMessage(chat.id, msg, { replyToMessageId: grammyCtx.message?.message_id });
+          },
+          getBotUsername: () => bot?.botInfo?.username || "unknown",
+        };
+        try {
+          await parser.handler(parserCtx);
+        } catch (err) {
+          logger.error(`Cross-plugin parser ${parser.id} failed:`, err);
+          await sendMessage(chat.id, "An error occurred while processing your message.", { replyToMessageId: grammyCtx.message?.message_id });
+        }
+        return;
+      }
+    }
   }
 
   // Build channel info
@@ -1360,11 +1474,42 @@ async function startBot(): Promise<void> {
   logger.info("Telegram bot started");
 }
 
+// Plugin manifest (WaaS metadata)
+const manifest: PluginManifest = {
+  name: "@wopr-network/wopr-plugin-telegram",
+  version: "1.0.0",
+  description: "Telegram Bot integration using Grammy",
+  author: "TSavo",
+  license: "MIT",
+  repository: "https://github.com/wopr-network/wopr-plugin-telegram",
+  capabilities: ["channel"],
+  category: "channel",
+  icon: "✈️",
+  tags: ["telegram", "grammy", "bot", "channel"],
+  requires: {
+    env: ["TELEGRAM_BOT_TOKEN"],
+    network: { outbound: true },
+  },
+  configSchema,
+  setup: [
+    {
+      id: "bot-token",
+      title: "Telegram Bot Token",
+      description: "Get a bot token from @BotFather on Telegram and paste it here.",
+      fields: {
+        title: "Bot Token",
+        fields: [configSchema.fields.find((f: { name: string }) => f.name === "botToken")!],
+      },
+    },
+  ],
+};
+
 // Plugin definition
 const plugin: WOPRPlugin = {
   name: "telegram",
   version: "1.0.0",
   description: "Telegram Bot integration using Grammy",
+  manifest,
 
   async init(context: WOPRPluginContext): Promise<void> {
     ctx = context;
@@ -1375,6 +1520,12 @@ const plugin: WOPRPlugin = {
 
     // Register config schema
     ctx.registerConfigSchema("telegram", configSchema);
+
+    // Register as a channel provider so other plugins can add commands/parsers
+    if (ctx.registerChannelProvider) {
+      ctx.registerChannelProvider(telegramChannelProvider);
+      logger.info("Registered Telegram channel provider");
+    }
 
     // Refresh identity
     await refreshIdentity();
@@ -1398,6 +1549,15 @@ const plugin: WOPRPlugin = {
   },
 
   async shutdown(): Promise<void> {
+    // Clear cross-plugin registrations to avoid stale entries on re-init
+    registeredCommands.clear();
+    registeredParsers.clear();
+
+    // Unregister channel provider
+    if (ctx?.unregisterChannelProvider) {
+      ctx.unregisterChannelProvider("telegram");
+    }
+
     // Cancel all active streams
     for (const [, { stream }] of activeStreams) {
       stream.cancel();
@@ -1432,5 +1592,5 @@ const plugin: WOPRPlugin = {
   },
 };
 
-export { validateTokenFilePath, downloadTelegramFile, sendPhoto, sendDocument, STANDARD_REACTIONS, isStandardReaction };
+export { validateTokenFilePath, downloadTelegramFile, sendPhoto, sendDocument, STANDARD_REACTIONS, isStandardReaction, telegramChannelProvider };
 export default plugin;
