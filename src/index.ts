@@ -712,7 +712,12 @@ async function handleMessage(grammyCtx: Context): Promise<void> {
         },
         getBotUsername: () => bot?.botInfo?.username || "unknown",
       };
-      await cmd.handler(cmdCtx);
+      try {
+        await cmd.handler(cmdCtx);
+      } catch (err) {
+        logger.error(`Cross-plugin command /${cmdName} failed:`, err);
+        await sendMessage(chat.id, "An error occurred while processing that command.", { replyToMessageId: grammyCtx.message?.message_id });
+      }
       return;
     }
   }
@@ -735,7 +740,12 @@ async function handleMessage(grammyCtx: Context): Promise<void> {
           },
           getBotUsername: () => bot?.botInfo?.username || "unknown",
         };
-        await parser.handler(parserCtx);
+        try {
+          await parser.handler(parserCtx);
+        } catch (err) {
+          logger.error(`Cross-plugin parser ${parser.id} failed:`, err);
+          await sendMessage(chat.id, "An error occurred while processing your message.", { replyToMessageId: grammyCtx.message?.message_id });
+        }
         return;
       }
     }
@@ -1488,7 +1498,7 @@ const manifest: PluginManifest = {
       description: "Get a bot token from @BotFather on Telegram and paste it here.",
       fields: {
         title: "Bot Token",
-        fields: [configSchema.fields[0]], // botToken field
+        fields: [configSchema.fields.find((f: { name: string }) => f.name === "botToken")!],
       },
     },
   ],
@@ -1539,6 +1549,10 @@ const plugin: WOPRPlugin = {
   },
 
   async shutdown(): Promise<void> {
+    // Clear cross-plugin registrations to avoid stale entries on re-init
+    registeredCommands.clear();
+    registeredParsers.clear();
+
     // Unregister channel provider
     if (ctx?.unregisterChannelProvider) {
       ctx.unregisterChannelProvider("telegram");
