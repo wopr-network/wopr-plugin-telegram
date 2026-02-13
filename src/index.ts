@@ -10,7 +10,7 @@ import path from "node:path";
 import { Readable } from "node:stream";
 import { pipeline } from "node:stream/promises";
 import winston from "winston";
-import { Bot, type Context, InputFile, webhookCallback } from "grammy";
+import { Bot, type Context, InlineKeyboard, InputFile, webhookCallback } from "grammy";
 import type { ReactionTypeEmoji } from "@grammyjs/types";
 import { autoRetry } from "@grammyjs/auto-retry";
 import type {
@@ -28,6 +28,13 @@ import type {
   ChannelProvider,
   PluginManifest,
 } from "@wopr-network/plugin-types";
+import {
+  buildMainKeyboard,
+  buildModelKeyboard,
+  buildSessionKeyboard,
+  parseCallbackData,
+  CB_PREFIX,
+} from "./keyboards.js";
 
 // Telegram config interface
 interface TelegramConfig {
@@ -1013,6 +1020,7 @@ interface SendOptions {
   mediaUrl?: string;
   mediaBuffer?: Buffer;
   mediaType?: "photo" | "document";
+  reply_markup?: InlineKeyboard;
 }
 
 /**
@@ -1145,9 +1153,14 @@ async function sendMessage(
     const replyId = i === 0 ? opts.replyToMessageId : undefined;
 
     try {
+      // Attach inline keyboard only to the last chunk
+      const markup = (i === chunks.length - 1 && opts.reply_markup)
+        ? opts.reply_markup
+        : undefined;
       await bot.api.sendMessage(chatId, chunk, {
         parse_mode: "HTML",
         reply_to_message_id: replyId,
+        reply_markup: markup,
       });
     } catch (err) {
       logger.error("Failed to send Telegram message:", err);
@@ -1297,6 +1310,7 @@ function registerCommandHandlers(botInstance: Bot): void {
     ];
     await sendMessage(grammyCtx.chat.id, statusLines.join("\n"), {
       replyToMessageId: grammyCtx.message?.message_id,
+      reply_markup: buildMainKeyboard(),
     });
   });
 
@@ -1336,8 +1350,190 @@ function registerCommandHandlers(botInstance: Bot): void {
     ];
     await sendMessage(grammyCtx.chat.id, helpText.join("\n"), {
       replyToMessageId: grammyCtx.message?.message_id,
+      reply_markup: buildMainKeyboard(),
     });
   });
+}
+
+// Register callback query handlers for inline keyboard buttons
+function registerCallbackHandlers(botInstance: Bot): void {
+  botInstance.on("callback_query:data", async (grammyCtx) => {
+    const data = grammyCtx.callbackQuery.data;
+    const action = parseCallbackData(data);
+    const chatId = grammyCtx.callbackQuery.message?.chat.id;
+
+    if (!chatId || !ctx) {
+      await grammyCtx.answerCallbackQuery({ text: "Bot is not ready." });
+      return;
+    }
+
+    // Check authorization
+    const user = grammyCtx.from;
+    const chat = grammyCtx.callbackQuery.message?.chat;
+    if (chat && user) {
+      const isGroup = chat.type === "group" || chat.type === "supergroup";
+      if (!isAllowed(String(user.id), user.username, isGroup)) {
+        await grammyCtx.answerCallbackQuery({ text: "Not authorized." });
+        return;
+      }
+    }
+
+    try {
+      switch (action.type) {
+        case "help": {
+          await grammyCtx.answerCallbackQuery();
+          const helpText = [
+            `<b>WOPR Telegram Commands</b>`,
+            ``,
+            `/ask &lt;question&gt; - Ask WOPR a question`,
+            `/model &lt;name&gt; - Switch AI model`,
+            `/session &lt;name&gt; - Switch to a named session`,
+            `/status - Show current session status`,
+            `/claim &lt;code&gt; - Claim bot ownership (DM only)`,
+            `/help - Show this help`,
+            ``,
+            `You can also mention me or reply to my messages to chat.`,
+          ];
+          await sendMessage(chatId, helpText.join("\n"), {
+            reply_markup: buildMainKeyboard(),
+          });
+          break;
+        }
+
+        case "model_list": {
+          await grammyCtx.answerCallbackQuery();
+          // Default model list — WOPR core does not expose a getModels() API
+          // to plugins, so we provide common model names as quick-switch options.
+          const defaultModels = ["opus", "sonnet", "haiku", "gpt-4o", "gpt-4o-mini"];
+          const kb = buildModelKeyboard(defaultModels);
+          await sendMessage(chatId, "<b>Select a model:</b>", {
+            reply_markup: kb,
+          });
+          break;
+        }
+
+        case "model_switch": {
+          await grammyCtx.answerCallbackQuery({ text: `Switching to ${action.model}...` });
+          const sessionKey = getSessionKeyFromCallback(grammyCtx);
+          const channelInfo = getChannelRefFromCallback(grammyCtx);
+          const from = getDisplayName(grammyCtx);
+          ctx.logMessage(sessionKey, `/model ${action.model}`, { from, channel: channelInfo });
+          try {
+            const response = await ctx.inject(sessionKey, `[${from}]: /model ${action.model}`, {
+              from,
+              channel: channelInfo,
+            });
+            await sendMessage(chatId, response, {
+              reply_markup: buildMainKeyboard(),
+            });
+          } catch (err) {
+            logger.error("Model switch callback failed:", err);
+            await sendMessage(chatId, "Failed to switch model. Try /model &lt;name&gt; instead.");
+          }
+          break;
+        }
+
+        case "session_new": {
+          await grammyCtx.answerCallbackQuery({ text: "Starting new session..." });
+          const sessionKey = getSessionKeyFromCallback(grammyCtx);
+          const channelInfo = getChannelRefFromCallback(grammyCtx);
+          const from = getDisplayName(grammyCtx);
+          const newSessionName = `telegram-${Date.now()}`;
+          ctx.logMessage(sessionKey, `/session ${newSessionName}`, { from, channel: channelInfo });
+          try {
+            const response = await ctx.inject(
+              newSessionName,
+              `[${from}]: /session ${newSessionName}`,
+              { from, channel: channelInfo },
+            );
+            await sendMessage(chatId, response, {
+              reply_markup: buildMainKeyboard(),
+            });
+          } catch (err) {
+            logger.error("New session callback failed:", err);
+            await sendMessage(chatId, "Failed to create new session.");
+          }
+          break;
+        }
+
+        case "session_switch": {
+          await grammyCtx.answerCallbackQuery({ text: `Switching session...` });
+          const channelInfo = getChannelRefFromCallback(grammyCtx);
+          const from = getDisplayName(grammyCtx);
+          ctx.logMessage(action.session, `/session ${action.session}`, { from, channel: channelInfo });
+          try {
+            const response = await ctx.inject(
+              action.session,
+              `[${from}]: /session ${action.session}`,
+              { from, channel: channelInfo },
+            );
+            await sendMessage(chatId, response, {
+              reply_markup: buildMainKeyboard(),
+            });
+          } catch (err) {
+            logger.error("Session switch callback failed:", err);
+            await sendMessage(chatId, "Failed to switch session.");
+          }
+          break;
+        }
+
+        case "status": {
+          await grammyCtx.answerCallbackQuery();
+          const sessionKey = getSessionKeyFromCallback(grammyCtx);
+          const sessions = ctx.getSessions();
+          const isActive = sessions.includes(sessionKey);
+          const identity = agentIdentity;
+          const statusLines = [
+            `<b>Session Status</b>`,
+            ``,
+            `<b>Bot:</b> ${identity.name || "WOPR"}`,
+            `<b>Session:</b> <code>${sessionKey}</code>`,
+            `<b>Active:</b> ${isActive ? "Yes" : "No"}`,
+            `<b>Active Sessions:</b> ${sessions.length}`,
+          ];
+          await sendMessage(chatId, statusLines.join("\n"), {
+            reply_markup: buildMainKeyboard(),
+          });
+          break;
+        }
+
+        default:
+          await grammyCtx.answerCallbackQuery({ text: "Unknown action." });
+          break;
+      }
+    } catch (err) {
+      logger.error("Callback query handler error:", err);
+      // Always try to acknowledge even on error to remove loading spinner
+      try {
+        await grammyCtx.answerCallbackQuery({ text: "An error occurred." });
+      } catch {
+        // Already answered or network error — ignore
+      }
+    }
+  });
+}
+
+// Helper to derive a session key from a callback query context
+function getSessionKeyFromCallback(grammyCtx: Context): string {
+  const chat = grammyCtx.callbackQuery?.message?.chat;
+  const user = grammyCtx.from;
+  if (!chat || !user) return "telegram-unknown";
+  const isGroup = chat.type === "group" || chat.type === "supergroup";
+  return isGroup ? `telegram-group:${chat.id}` : `telegram-dm:${user.id}`;
+}
+
+// Helper to derive channel ref from a callback query context
+function getChannelRefFromCallback(grammyCtx: Context): ChannelRef {
+  const chat = grammyCtx.callbackQuery?.message?.chat;
+  const user = grammyCtx.from;
+  if (!chat || !user) return { type: "telegram", id: "unknown" };
+  const isGroup = chat.type === "group" || chat.type === "supergroup";
+  const channelId = isGroup ? `group:${chat.id}` : `dm:${user.id}`;
+  return {
+    type: "telegram",
+    id: channelId,
+    name: (chat as any).title || user.first_name || "Telegram",
+  };
 }
 
 // Start the bot in webhook mode
@@ -1425,6 +1621,9 @@ async function startBot(): Promise<void> {
 
   // Register command handlers before the generic message handler
   registerCommandHandlers(bot);
+
+  // Register inline keyboard callback query handlers
+  registerCallbackHandlers(bot);
 
   // Register commands with BotFather for the "/" menu
   try {
@@ -1593,4 +1792,5 @@ const plugin: WOPRPlugin = {
 };
 
 export { validateTokenFilePath, downloadTelegramFile, sendPhoto, sendDocument, STANDARD_REACTIONS, isStandardReaction, telegramChannelProvider };
+export { buildMainKeyboard, buildModelKeyboard, buildSessionKeyboard, parseCallbackData, CB_PREFIX } from "./keyboards.js";
 export default plugin;
