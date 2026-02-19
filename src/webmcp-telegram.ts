@@ -13,27 +13,30 @@
 // ============================================================================
 
 export interface AuthContext {
-  token?: string;
-  [key: string]: unknown;
+	token?: string;
+	[key: string]: unknown;
 }
 
 export interface ParameterSchema {
-  type: string;
-  description: string;
-  required?: boolean;
+	type: string;
+	description: string;
+	required?: boolean;
 }
 
 export interface WebMCPTool {
-  name: string;
-  description: string;
-  parameters: Record<string, ParameterSchema>;
-  handler: (params: Record<string, unknown>, auth: AuthContext) => Promise<unknown>;
+	name: string;
+	description: string;
+	parameters: Record<string, ParameterSchema>;
+	handler: (
+		params: Record<string, unknown>,
+		auth: AuthContext,
+	) => Promise<unknown>;
 }
 
 export interface WebMCPRegistry {
-  register(tool: WebMCPTool): void;
-  get(name: string): WebMCPTool | undefined;
-  list(): string[];
+	register(tool: WebMCPTool): void;
+	get(name: string): WebMCPTool | undefined;
+	list(): string[];
 }
 
 // ============================================================================
@@ -41,33 +44,35 @@ export interface WebMCPRegistry {
 // ============================================================================
 
 interface RequestOptions {
-  method?: string;
-  body?: string;
-  headers?: Record<string, string>;
+	method?: string;
+	body?: string;
+	headers?: Record<string, string>;
 }
 
 async function daemonRequest<T>(
-  apiBase: string,
-  path: string,
-  auth: AuthContext,
-  options?: RequestOptions,
+	apiBase: string,
+	path: string,
+	auth: AuthContext,
+	options?: RequestOptions,
 ): Promise<T> {
-  const headers: Record<string, string> = {
-    "Content-Type": "application/json",
-    ...options?.headers,
-  };
-  if (auth.token) {
-    headers.Authorization = `Bearer ${auth.token as string}`;
-  }
-  const res = await fetch(`${apiBase}${path}`, {
-    ...options,
-    headers,
-  });
-  if (!res.ok) {
-    const err = await res.json().catch(() => ({ error: "Request failed" }));
-    throw new Error((err as { error?: string }).error || `Request failed (${res.status})`);
-  }
-  return res.json() as Promise<T>;
+	const headers: Record<string, string> = {
+		"Content-Type": "application/json",
+		...options?.headers,
+	};
+	if (auth.token) {
+		headers.Authorization = `Bearer ${auth.token as string}`;
+	}
+	const res = await fetch(`${apiBase}${path}`, {
+		...options,
+		headers,
+	});
+	if (!res.ok) {
+		const err = await res.json().catch(() => ({ error: "Request failed" }));
+		throw new Error(
+			(err as { error?: string }).error || `Request failed (${res.status})`,
+		);
+	}
+	return res.json() as Promise<T>;
 }
 
 // ============================================================================
@@ -83,34 +88,40 @@ async function daemonRequest<T>(
  * @param registry - The WebMCPRegistry instance to register tools on
  * @param apiBase  - Base URL of the WOPR daemon API (e.g. "/api" or "http://localhost:7437")
  */
-export function registerTelegramTools(registry: WebMCPRegistry, apiBase = "/api"): void {
-  // 1. getTelegramStatus
-  registry.register({
-    name: "getTelegramStatus",
-    description: "Get Telegram bot connection status: online/offline, username, and latency.",
-    parameters: {},
-    handler: async (_params: Record<string, unknown>, auth: AuthContext) => {
-      return daemonRequest(apiBase, "/plugins/telegram/status", auth);
-    },
-  });
+export function registerTelegramTools(
+	registry: WebMCPRegistry,
+	apiBase = "/api",
+): void {
+	// 1. getTelegramStatus
+	registry.register({
+		name: "getTelegramStatus",
+		description:
+			"Get Telegram bot connection status: online/offline, username, and latency.",
+		parameters: {},
+		handler: async (_params: Record<string, unknown>, auth: AuthContext) => {
+			return daemonRequest(apiBase, "/plugins/telegram/status", auth);
+		},
+	});
 
-  // 2. listTelegramChats
-  registry.register({
-    name: "listTelegramChats",
-    description: "List active Telegram chats and groups the bot is participating in.",
-    parameters: {},
-    handler: async (_params: Record<string, unknown>, auth: AuthContext) => {
-      return daemonRequest(apiBase, "/plugins/telegram/chats", auth);
-    },
-  });
+	// 2. listTelegramChats
+	registry.register({
+		name: "listTelegramChats",
+		description:
+			"List active Telegram chats and groups the bot is participating in.",
+		parameters: {},
+		handler: async (_params: Record<string, unknown>, auth: AuthContext) => {
+			return daemonRequest(apiBase, "/plugins/telegram/chats", auth);
+		},
+	});
 
-  // 3. getTelegramMessageStats
-  registry.register({
-    name: "getTelegramMessageStats",
-    description: "Get Telegram message processing statistics: active sessions and conversations.",
-    parameters: {},
-    handler: async (_params: Record<string, unknown>, auth: AuthContext) => {
-      return daemonRequest(apiBase, "/plugins/telegram/stats", auth);
-    },
-  });
+	// 3. getTelegramMessageStats
+	registry.register({
+		name: "getTelegramMessageStats",
+		description:
+			"Get Telegram message processing statistics: active sessions and conversations.",
+		parameters: {},
+		handler: async (_params: Record<string, unknown>, auth: AuthContext) => {
+			return daemonRequest(apiBase, "/plugins/telegram/stats", auth);
+		},
+	});
 }
