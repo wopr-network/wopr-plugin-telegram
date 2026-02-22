@@ -24,6 +24,9 @@ importers:
       '@biomejs/biome':
         specifier: ^2.3.14
         version: 2.4.4
+      '@grammyjs/types':
+        specifier: ^3.24.0
+        version: 3.24.0
       '@types/node':
         specifier: ^25.3.0
         version: 25.3.0
