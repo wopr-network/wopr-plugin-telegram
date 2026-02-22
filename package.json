@@ -11,11 +11,11 @@
     "@biomejs/biome": "^2.3.14",
     "@types/node": "^25.3.0",
     "typescript": "^5.0.0",
-    "vitest": "^4.0.18"
+    "vitest": "^4.0.18",
+    "@grammyjs/types": "^3.24.0"
   },
   "files": [
-    "dist/**/*",
-    "IDENTITY.md"
+    "dist"
   ],
   "keywords": [
     "wopr",
@@ -27,14 +27,11 @@
   "license": "MIT",
   "main": "dist/index.js",
   "name": "@wopr-network/wopr-plugin-telegram",
-  "peerDependencies": {
-    "wopr": "^2.0.0"
-  },
   "scripts": {
     "build": "tsc",
     "check": "biome check src/ && tsc --noEmit",
     "format": "biome format --write src/",
-    "lint": "eslint src/**/*.ts",
+    "lint": "biome check src/",
     "lint:fix": "biome check --fix src/",
     "prepublishOnly": "npm run build",
     "test": "vitest run"

@@ -37,8 +37,6 @@ import winston from "winston";
 import {
 	buildMainKeyboard,
 	buildModelKeyboard,
-	buildSessionKeyboard,
-	CB_PREFIX,
 	parseCallbackData,
 } from "./keyboards.js";
 import { createTelegramExtension } from "./telegram-extension.js";
@@ -68,7 +66,7 @@ let config: TelegramConfig = {};
 let agentIdentity: AgentIdentity = { name: "WOPR", emoji: "👀" };
 let bot: Bot | null = null;
 let webhookServer: http.Server | null = null;
-const isShuttingDown = false;
+const _isShuttingDown = false;
 let logger: winston.Logger;
 
 // Streaming constants
@@ -800,7 +798,7 @@ async function handleMessage(grammyCtx: Context): Promise<void> {
 	}
 
 	// Dispatch cross-plugin registered commands (e.g., from P2P plugin)
-	if (text && text.startsWith("/")) {
+	if (text?.startsWith("/")) {
 		const parts = text.slice(1).split(/\s+/);
 		const cmdName = parts[0]?.toLowerCase();
 		const cmd = cmdName ? registeredCommands.get(cmdName) : undefined;
@@ -1953,7 +1951,7 @@ const plugin: WOPRPlugin = {
 		// Validate config
 		try {
 			resolveToken();
-		} catch (err) {
+		} catch (_err) {
 			logger.warn(
 				"No Telegram bot token configured. Run 'wopr configure --plugin telegram' to set up.",
 			);
