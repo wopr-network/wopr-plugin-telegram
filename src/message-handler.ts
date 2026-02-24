@@ -1,3 +1,4 @@
+import type { Chat, User } from "@grammyjs/types";
 import type { Bot, Context } from "grammy";
 import type winston from "winston";
 import {
@@ -130,8 +131,8 @@ export async function injectMessage(
 	ctx: WOPRPluginContext,
 	logger: winston.Logger,
 	text: string,
-	user: any,
-	chat: any,
+	user: User,
+	chat: Chat,
 	sessionKey: string,
 	channelInfo: ChannelRef,
 	replyToMessageId?: number,

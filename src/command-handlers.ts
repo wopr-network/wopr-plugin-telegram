@@ -49,7 +49,10 @@ function getChannelRefFromCallback(grammyCtx: Context): ChannelRef {
 	return {
 		type: "telegram",
 		id: channelId,
-		name: (chat as any).title || user.first_name || "Telegram",
+		name:
+			("title" in chat ? chat.title : undefined) ||
+			user.first_name ||
+			"Telegram",
 	};
 }
 

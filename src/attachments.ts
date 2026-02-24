@@ -234,7 +234,7 @@ export async function sendMessage(
 ): Promise<void> {
 	// Handle media responses
 	if (opts.mediaUrl || opts.mediaBuffer) {
-		const media = opts.mediaBuffer || opts.mediaUrl!;
+		const media = opts.mediaBuffer ?? opts.mediaUrl ?? "";
 		if (opts.mediaType === "photo") {
 			await sendPhoto(
 				bot,

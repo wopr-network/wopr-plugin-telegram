@@ -52,6 +52,7 @@ const configSchema: ConfigSchema = {
 			label: "Bot Token",
 			placeholder: "123456:ABC...",
 			required: true,
+			secret: true,
 			description: "Get from @BotFather on Telegram",
 		},
 		{
@@ -149,6 +150,7 @@ const configSchema: ConfigSchema = {
 			type: "password",
 			label: "Webhook Secret",
 			placeholder: "random-secret-string",
+			secret: true,
 			description: "Secret token for validating webhook requests from Telegram",
 		},
 		{
@@ -263,7 +265,8 @@ async function startBot(): Promise<void> {
 		logger.error("Telegram bot error:", err);
 	});
 
-	const currentCtx = ctx!;
+	if (!ctx) throw new Error("Plugin context not initialized");
+	const currentCtx = ctx;
 
 	// Register command handlers before the generic message handler
 	registerCommandHandlers(bot, currentCtx, config, agentIdentity, logger);
@@ -354,11 +357,9 @@ const manifest: PluginManifest = {
 				"Get a bot token from @BotFather on Telegram and paste it here.",
 			fields: {
 				title: "Bot Token",
-				fields: [
-					configSchema.fields.find(
-						(f: { name: string }) => f.name === "botToken",
-					)!,
-				],
+				fields: configSchema.fields.filter(
+					(f: { name: string }) => f.name === "botToken",
+				),
 			},
 		},
 	],
