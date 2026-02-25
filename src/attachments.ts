@@ -234,8 +234,8 @@ export async function sendMessage(
 ): Promise<void> {
 	// Handle media responses
 	if (opts.mediaUrl || opts.mediaBuffer) {
-		const media = opts.mediaBuffer || opts.mediaUrl!;
-		if (opts.mediaType === "photo") {
+		const media = opts.mediaBuffer ?? opts.mediaUrl;
+		if (media && opts.mediaType === "photo") {
 			await sendPhoto(
 				bot,
 				logger,
@@ -246,7 +246,7 @@ export async function sendMessage(
 			);
 			return;
 		}
-		if (opts.mediaType === "document") {
+		if (media && opts.mediaType === "document") {
 			await sendDocument(
 				bot,
 				logger,
