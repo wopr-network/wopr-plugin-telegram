@@ -46,10 +46,12 @@ function getChannelRefFromCallback(grammyCtx: Context): ChannelRef {
 	if (!chat || !user) return { type: "telegram", id: "unknown" };
 	const isGroup = chat.type === "group" || chat.type === "supergroup";
 	const channelId = isGroup ? `group:${chat.id}` : `dm:${user.id}`;
+	const chatTitle =
+		"title" in chat ? (chat as { title?: string }).title : undefined;
 	return {
 		type: "telegram",
 		id: channelId,
-		name: (chat as any).title || user.first_name || "Telegram",
+		name: chatTitle || user.first_name || "Telegram",
 	};
 }
 

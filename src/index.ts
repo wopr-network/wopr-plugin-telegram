@@ -263,7 +263,11 @@ async function startBot(): Promise<void> {
 		logger.error("Telegram bot error:", err);
 	});
 
-	const currentCtx = ctx!;
+	if (!ctx) {
+		logger.error("Plugin context not initialized");
+		return;
+	}
+	const currentCtx = ctx;
 
 	// Register command handlers before the generic message handler
 	registerCommandHandlers(bot, currentCtx, config, agentIdentity, logger);
@@ -354,11 +358,9 @@ const manifest: PluginManifest = {
 				"Get a bot token from @BotFather on Telegram and paste it here.",
 			fields: {
 				title: "Bot Token",
-				fields: [
-					configSchema.fields.find(
-						(f: { name: string }) => f.name === "botToken",
-					)!,
-				],
+				fields: configSchema.fields
+					.filter((f) => f.name === "botToken")
+					.slice(0, 1),
 			},
 		},
 	],
