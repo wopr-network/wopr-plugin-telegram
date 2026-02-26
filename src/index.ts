@@ -36,6 +36,7 @@ let agentIdentity: AgentIdentity = { name: "WOPR", emoji: "👀" };
 let bot: Bot | null = null;
 let webhookServer: http.Server | null = null;
 let logger = initLogger();
+const cleanups: Array<() => void> = [];
 
 // Getter functions for injection into modules
 const getBot = () => bot;
@@ -53,6 +54,8 @@ const configSchema: ConfigSchema = {
 			placeholder: "123456:ABC...",
 			required: true,
 			description: "Get from @BotFather on Telegram",
+			secret: true,
+			setupFlow: "paste",
 		},
 		{
 			name: "tokenFile",
@@ -60,6 +63,7 @@ const configSchema: ConfigSchema = {
 			label: "Token File Path",
 			placeholder: "/path/to/token.txt",
 			description: "Alternative to inline token",
+			setupFlow: "none",
 		},
 		{
 			name: "dmPolicy",
@@ -68,6 +72,7 @@ const configSchema: ConfigSchema = {
 			placeholder: "pairing",
 			default: "pairing",
 			description: "How to handle direct messages",
+			setupFlow: "none",
 		},
 		{
 			name: "allowFrom",
@@ -75,6 +80,7 @@ const configSchema: ConfigSchema = {
 			label: "Allowed User IDs",
 			placeholder: "123456789, @username",
 			description: "Telegram user IDs or usernames allowed to DM",
+			setupFlow: "none",
 		},
 		{
 			name: "groupPolicy",
@@ -83,6 +89,7 @@ const configSchema: ConfigSchema = {
 			placeholder: "allowlist",
 			default: "allowlist",
 			description: "How to handle group messages",
+			setupFlow: "none",
 		},
 		{
 			name: "groupAllowFrom",
@@ -90,6 +97,7 @@ const configSchema: ConfigSchema = {
 			label: "Allowed Group Senders",
 			placeholder: "123456789",
 			description: "User IDs allowed to trigger in groups",
+			setupFlow: "none",
 		},
 		{
 			name: "mediaMaxMb",
@@ -98,6 +106,7 @@ const configSchema: ConfigSchema = {
 			placeholder: "5",
 			default: 5,
 			description: "Maximum attachment size",
+			setupFlow: "none",
 		},
 		{
 			name: "timeoutSeconds",
@@ -106,6 +115,7 @@ const configSchema: ConfigSchema = {
 			placeholder: "30",
 			default: 30,
 			description: "Timeout for Telegram API calls",
+			setupFlow: "none",
 		},
 		{
 			name: "webhookUrl",
@@ -113,6 +123,7 @@ const configSchema: ConfigSchema = {
 			label: "Webhook URL",
 			placeholder: "https://example.com/webhook",
 			description: "Optional: use webhook instead of polling",
+			setupFlow: "none",
 		},
 		{
 			name: "webhookPort",
@@ -120,6 +131,7 @@ const configSchema: ConfigSchema = {
 			label: "Webhook Port",
 			placeholder: "3000",
 			description: "Port for webhook server",
+			setupFlow: "none",
 		},
 		{
 			name: "maxRetries",
@@ -128,6 +140,7 @@ const configSchema: ConfigSchema = {
 			placeholder: "3",
 			default: 3,
 			description: "Maximum number of retry attempts for failed API calls",
+			setupFlow: "none",
 		},
 		{
 			name: "retryMaxDelay",
@@ -136,6 +149,7 @@ const configSchema: ConfigSchema = {
 			placeholder: "30",
 			default: 30,
 			description: "Maximum delay to wait for rate-limited retries",
+			setupFlow: "none",
 		},
 		{
 			name: "webhookPath",
@@ -143,6 +157,7 @@ const configSchema: ConfigSchema = {
 			label: "Webhook Path",
 			placeholder: "/telegram",
 			description: "URL path for webhook endpoint (default: /telegram)",
+			setupFlow: "none",
 		},
 		{
 			name: "webhookSecret",
@@ -150,6 +165,8 @@ const configSchema: ConfigSchema = {
 			label: "Webhook Secret",
 			placeholder: "random-secret-string",
 			description: "Secret token for validating webhook requests from Telegram",
+			secret: true,
+			setupFlow: "paste",
 		},
 		{
 			name: "ackReaction",
@@ -158,6 +175,7 @@ const configSchema: ConfigSchema = {
 			placeholder: "\u{1F440}",
 			description:
 				"Emoji reaction sent on incoming messages to acknowledge receipt (must be a standard Telegram reaction emoji)",
+			setupFlow: "none",
 		},
 	],
 };
@@ -171,8 +189,8 @@ async function refreshIdentity(): Promise<void> {
 			agentIdentity = { ...agentIdentity, ...identity };
 			logger.info("Identity refreshed:", agentIdentity.name);
 		}
-	} catch (e) {
-		logger.warn("Failed to refresh identity:", String(e));
+	} catch (error: unknown) {
+		logger.warn("Failed to refresh identity:", String(error));
 	}
 }
 
@@ -279,8 +297,8 @@ async function startBot(): Promise<void> {
 	try {
 		await bot.api.setMyCommands(botCommands);
 		logger.info("Registered bot commands with BotFather");
-	} catch (err) {
-		logger.warn("Failed to register bot commands:", err);
+	} catch (error: unknown) {
+		logger.warn("Failed to register bot commands:", error);
 	}
 
 	// Message handler (catches non-command messages)
@@ -297,8 +315,8 @@ async function startBot(): Promise<void> {
 				agentIdentity,
 				logger,
 			);
-		} catch (err) {
-			logger.error("Error handling Telegram message:", err);
+		} catch (error: unknown) {
+			logger.error("Error handling Telegram message:", error);
 		}
 	});
 
@@ -308,8 +326,8 @@ async function startBot(): Promise<void> {
 		logger.info(`Starting Telegram bot with webhook: ${config.webhookUrl}`);
 		try {
 			await startWebhook(bot);
-		} catch (err) {
-			logger.error("Webhook setup failed, falling back to polling:", err);
+		} catch (error: unknown) {
+			logger.error("Webhook setup failed, falling back to polling:", error);
 			// Clean up partial webhook state
 			if (webhookServer) {
 				webhookServer.close();
@@ -345,6 +363,8 @@ const manifest: PluginManifest = {
 	category: "channel",
 	icon: "✈️",
 	tags: ["telegram", "grammy", "bot", "channel"],
+	provides: { capabilities: [] },
+	lifecycle: { shutdownBehavior: "graceful" },
 	requires: {
 		env: ["TELEGRAM_BOT_TOKEN"],
 		network: { outbound: true },
@@ -388,12 +408,24 @@ const plugin: WOPRPlugin = {
 		logger = initLogger();
 
 		// Register config schema
-		ctx.registerConfigSchema("telegram", configSchema);
+		if (ctx.registerConfigSchema) {
+			ctx.registerConfigSchema("telegram", configSchema);
+			cleanups.push(() => {
+				if (ctx?.unregisterConfigSchema) {
+					ctx.unregisterConfigSchema("telegram");
+				}
+			});
+		}
 
 		// Register as a channel provider so other plugins can add commands/parsers
 		if (ctx.registerChannelProvider) {
 			ctx.registerChannelProvider(telegramChannelProvider);
 			logger.info("Registered Telegram channel provider");
+			cleanups.push(() => {
+				if (ctx?.unregisterChannelProvider) {
+					ctx.unregisterChannelProvider("telegram");
+				}
+			});
 		}
 
 		// Register the Telegram extension so other plugins and daemon routes can access status
@@ -404,6 +436,11 @@ const plugin: WOPRPlugin = {
 			);
 			ctx.registerExtension("telegram", extension);
 			logger.info("Registered Telegram extension");
+			cleanups.push(() => {
+				if (ctx?.unregisterExtension) {
+					ctx.unregisterExtension("telegram");
+				}
+			});
 		}
 
 		// Refresh identity
@@ -412,7 +449,7 @@ const plugin: WOPRPlugin = {
 		// Validate config
 		try {
 			resolveToken(config);
-		} catch (_err) {
+		} catch (_error: unknown) {
 			logger.warn(
 				"No Telegram bot token configured. Run 'wopr configure --plugin telegram' to set up.",
 			);
@@ -422,24 +459,26 @@ const plugin: WOPRPlugin = {
 		// Start bot
 		try {
 			await startBot();
-		} catch (err) {
-			logger.error("Failed to start Telegram bot:", err);
+		} catch (error: unknown) {
+			logger.error("Failed to start Telegram bot:", error);
 		}
 	},
 
 	async shutdown(): Promise<void> {
+		if (!ctx) return;
+
+		// Run all registered cleanups
+		for (const cleanup of cleanups) {
+			try {
+				cleanup();
+			} catch (error: unknown) {
+				logger?.error("Cleanup error:", error);
+			}
+		}
+		cleanups.length = 0;
+
 		// Clear cross-plugin registrations to avoid stale entries on re-init
 		clearRegistrations();
-
-		// Unregister channel provider
-		if (ctx?.unregisterChannelProvider) {
-			ctx.unregisterChannelProvider("telegram");
-		}
-
-		// Unregister extension
-		if (ctx?.unregisterExtension) {
-			ctx.unregisterExtension("telegram");
-		}
 
 		// Cancel all active streams
 		cancelAllStreams();
