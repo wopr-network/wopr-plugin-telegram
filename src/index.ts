@@ -196,90 +196,86 @@ async function refreshIdentity(): Promise<void> {
 
 // Start the bot in webhook mode
 async function startWebhook(botInstance: Bot): Promise<void> {
-	const webhookUrl = config.webhookUrl || "";
-	const port = config.webhookPort || 3000;
-	const webhookPath = config.webhookPath || "/telegram";
-	let secret = config.webhookSecret;
-	if (!secret) {
-		secret = crypto.randomBytes(32).toString("hex");
-		logger.warn(
-			"webhookSecret not configured — auto-generated a random secret. " +
-				"This secret will not persist across restarts. " +
-				"Set webhookSecret in your plugin config for stable authentication.",
-		);
-	}
+  const webhookUrl = config.webhookUrl || "";
+  const port = config.webhookPort || 3000;
+  const webhookPath = config.webhookPath || "/telegram";
+  let secret = config.webhookSecret;
+  if (!secret) {
+    secret = crypto.randomBytes(32).toString("hex");
+    logger.warn(
+      "webhookSecret not configured — auto-generated a random secret. " +
+        "This secret will not persist across restarts. " +
+        "Set webhookSecret in your plugin config for stable authentication.",
+    );
+  }
 
-	// Initialize bot (fetch bot info) without starting polling
-	await botInstance.init();
+  // Initialize bot (fetch bot info) without starting polling
+  await botInstance.init();
 
-	// Create webhook handler using grammY's built-in adapter
-	const handleUpdate = webhookCallback(botInstance, "http", {
-		secretToken: secret,
-	});
+  // Create webhook handler using grammY's built-in adapter
+  const handleUpdate = webhookCallback(botInstance, "http", {
+    secretToken: secret,
+  });
 
-	// Create HTTP server
-	const server = http.createServer((req, res) => {
-		if (req.method === "POST" && req.url === webhookPath) {
-			handleUpdate(req, res);
-		} else {
-			res.writeHead(404);
-			res.end();
-		}
-	});
-	webhookServer = server;
+  // Create HTTP server
+  const server = http.createServer((req, res) => {
+    if (req.method === "POST" && req.url === webhookPath) {
+      handleUpdate(req, res);
+    } else {
+      res.writeHead(404);
+      res.end();
+    }
+  });
+  webhookServer = server;
 
-	// Start listening
-	await new Promise<void>((resolve, reject) => {
-		server.listen(port, () => {
-			logger.info(
-				`Webhook server listening on port ${port} at path ${webhookPath}`,
-			);
-			resolve();
-		});
-		server.once("error", reject);
-	});
+  // Start listening
+  await new Promise<void>((resolve, reject) => {
+    server.listen(port, () => {
+      logger.info(`Webhook server listening on port ${port} at path ${webhookPath}`);
+      resolve();
+    });
+    server.once("error", reject);
+  });
 
-	// Register webhook with Telegram
-	await botInstance.api.setWebhook(webhookUrl, {
-		secret_token: secret,
-	});
+  // Register webhook with Telegram
+  await botInstance.api.setWebhook(webhookUrl, {
+    secret_token: secret,
+  });
 
-	logger.info(`Webhook registered with Telegram: ${webhookUrl}`);
+  logger.info(`Webhook registered with Telegram: ${webhookUrl}`);
 }
 
 // Start the bot
 async function startBot(): Promise<void> {
 	const token = resolveToken(config);
 
-	bot = new Bot(token, {
-		client: {
-			timeoutSeconds: config.timeoutSeconds || 30,
-		},
-	});
+  bot = new Bot(token, {
+    client: {
+      timeoutSeconds: config.timeoutSeconds || 30,
+    },
+  });
 
-	// Install auto-retry transformer for exponential backoff on failed API calls
-	const maxRetryAttempts = config.maxRetries ?? 3;
-	if (maxRetryAttempts > 0) {
-		const maxDelaySeconds = config.retryMaxDelay ?? 30;
-		bot.api.config.use(
-			autoRetry({
-				maxRetryAttempts,
-				maxDelaySeconds,
-				rethrowInternalServerErrors: false,
-				rethrowHttpErrors: false,
-			}),
-		);
-		logger.info(
-			`Auto-retry enabled: maxRetryAttempts=${maxRetryAttempts}, maxDelaySeconds=${maxDelaySeconds}`,
-		);
-	} else {
-		logger.info("Auto-retry disabled (maxRetries=0)");
-	}
+  // Install auto-retry transformer for exponential backoff on failed API calls
+  const maxRetryAttempts = config.maxRetries ?? 3;
+  if (maxRetryAttempts > 0) {
+    const maxDelaySeconds = config.retryMaxDelay ?? 30;
+    bot.api.config.use(
+      autoRetry({
+        maxRetryAttempts,
+        maxDelaySeconds,
+        rethrowInternalServerErrors: false,
+        rethrowHttpErrors: false,
+      }),
+    );
+    logger.info(`Auto-retry enabled: maxRetryAttempts=${maxRetryAttempts}, maxDelaySeconds=${maxDelaySeconds}`);
+  } else {
+    logger.info("Auto-retry disabled (maxRetries=0)");
+  }
 
-	// Error handler
-	bot.catch((err) => {
-		logger.error("Telegram bot error:", err);
-	});
+  // Error handler
+  bot.catch((err) => {
+    logger.error("Telegram bot error:", err);
+  });
 
 	if (!ctx) {
 		logger.error("Plugin context not initialized");
@@ -348,7 +344,7 @@ async function startBot(): Promise<void> {
 		await bot.start();
 	}
 
-	logger.info("Telegram bot started");
+  logger.info("Telegram bot started");
 }
 
 // Plugin manifest (WaaS metadata)
@@ -395,17 +391,17 @@ const telegramChannelProvider = createChannelProvider(
 
 // Plugin definition
 const plugin: WOPRPlugin = {
-	name: "telegram",
-	version: "1.0.0",
-	description: "Telegram Bot integration using Grammy",
-	manifest,
+  name: "telegram",
+  version: "1.0.0",
+  description: "Telegram Bot integration using Grammy",
+  manifest,
 
-	async init(context: WOPRPluginContext): Promise<void> {
-		ctx = context;
-		config = (context.getConfig() || {}) as TelegramConfig;
+  async init(context: WOPRPluginContext): Promise<void> {
+    ctx = context;
+    config = (context.getConfig() || {}) as TelegramConfig;
 
-		// Initialize logger
-		logger = initLogger();
+    // Initialize logger
+    logger = initLogger();
 
 		// Register config schema
 		if (ctx.registerConfigSchema) {
@@ -443,8 +439,8 @@ const plugin: WOPRPlugin = {
 			});
 		}
 
-		// Refresh identity
-		await refreshIdentity();
+    // Refresh identity
+    await refreshIdentity();
 
 		// Validate config
 		try {
@@ -483,32 +479,32 @@ const plugin: WOPRPlugin = {
 		// Cancel all active streams
 		cancelAllStreams();
 
-		// Close webhook server if running
-		if (webhookServer) {
-			logger.info("Stopping webhook server...");
-			const server = webhookServer;
-			await new Promise<void>((resolve) => {
-				server.close(() => resolve());
-			});
-			webhookServer = null;
-		}
+    // Close webhook server if running
+    if (webhookServer) {
+      logger.info("Stopping webhook server...");
+      const server = webhookServer;
+      await new Promise<void>((resolve) => {
+        server.close(() => resolve());
+      });
+      webhookServer = null;
+    }
 
-		if (bot) {
-			logger.info("Stopping Telegram bot...");
-			// Delete webhook registration if we were in webhook mode
-			if (config.webhookUrl) {
-				try {
-					await bot.api.deleteWebhook();
-				} catch {
-					// Ignore errors during shutdown
-				}
-			}
-			await bot.stop();
-			bot = null;
-		}
+    if (bot) {
+      logger.info("Stopping Telegram bot...");
+      // Delete webhook registration if we were in webhook mode
+      if (config.webhookUrl) {
+        try {
+          await bot.api.deleteWebhook();
+        } catch {
+          // Ignore errors during shutdown
+        }
+      }
+      await bot.stop();
+      bot = null;
+    }
 
-		ctx = null;
-	},
+    ctx = null;
+  },
 };
 
 export {
@@ -520,23 +516,23 @@ export {
 export { isStandardReaction, STANDARD_REACTIONS } from "./reactions.js";
 export { telegramChannelProvider };
 export {
-	buildMainKeyboard,
-	buildModelKeyboard,
-	buildSessionKeyboard,
-	CB_PREFIX,
-	parseCallbackData,
+  buildMainKeyboard,
+  buildModelKeyboard,
+  buildSessionKeyboard,
+  CB_PREFIX,
+  parseCallbackData,
 } from "./keyboards.js";
 export type {
-	TelegramChatInfo,
-	TelegramExtension,
-	TelegramMessageStatsInfo,
-	TelegramStatusInfo,
+  TelegramChatInfo,
+  TelegramExtension,
+  TelegramMessageStatsInfo,
+  TelegramStatusInfo,
 } from "./telegram-extension.js";
 export { createTelegramExtension } from "./telegram-extension.js";
 export type {
-	AuthContext,
-	WebMCPRegistry,
-	WebMCPTool,
+  AuthContext,
+  WebMCPRegistry,
+  WebMCPTool,
 } from "./webmcp-telegram.js";
 export { registerTelegramTools } from "./webmcp-telegram.js";
 export default plugin;
