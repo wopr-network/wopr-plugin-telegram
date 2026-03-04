@@ -1,6 +1,12 @@
 import type { Bot, Context } from "grammy";
 import type winston from "winston";
 import { sendMessage } from "./attachments.js";
+import {
+  getPendingFriendRequest,
+  isFriendRequestCallback,
+  parseFriendRequestCallback,
+  removePendingFriendRequest,
+} from "./friend-buttons.js";
 import { buildMainKeyboard, buildModelKeyboard, parseCallbackData } from "./keyboards.js";
 import { checkCommandAuth, getDisplayName, getSessionKey, injectCommandMessage, isAllowed } from "./message-handler.js";
 import type { AgentIdentity, ChannelRef, TelegramConfig, WOPRPluginContext } from "./types.js";
@@ -163,6 +169,66 @@ export function registerCallbackHandlers(
       await grammyCtx.answerCallbackQuery({ text: "Bot is not ready." });
       return;
     }
+
+    // Handle friend request accept/deny buttons (no auth check — owner-only DM)
+    if (isFriendRequestCallback(data)) {
+      const parsed = parseFriendRequestCallback(data);
+      if (!parsed) {
+        await grammyCtx.answerCallbackQuery({ text: "Invalid button." });
+        return;
+      }
+
+      const pending = getPendingFriendRequest(parsed.from);
+      if (!pending) {
+        await grammyCtx.answerCallbackQuery({ text: "Friend request expired or already handled." });
+        return;
+      }
+
+      const p2pExt = ctx.getExtension?.("p2p") as
+        | {
+            acceptFriendRequest?: (
+              from: string,
+              pending: { requestPubkey: string; encryptPub: string; channelId: string; signature: string },
+            ) => Promise<string>;
+            denyFriendRequest?: (from: string, signature: string) => Promise<void>;
+          }
+        | undefined;
+
+      if (parsed.action === "accept") {
+        try {
+          await grammyCtx.answerCallbackQuery({ text: "Accepting..." });
+          const acceptMessage = p2pExt?.acceptFriendRequest
+            ? await p2pExt.acceptFriendRequest(parsed.from, pending)
+            : `Friend request from ${parsed.from} accepted.`;
+          removePendingFriendRequest(parsed.from);
+          await sendMessage(
+            botInstance,
+            logger,
+            chatId,
+            `Friend request from <b>${parsed.from}</b> <b>accepted</b>.\n\n${acceptMessage}`,
+          );
+          logger.info(`[telegram] Friend request from ${parsed.from} accepted via button`);
+        } catch (err) {
+          logger.error(`[telegram] Failed to accept friend request from ${parsed.from}:`, err);
+          await sendMessage(botInstance, logger, chatId, `Failed to accept friend request: ${String(err)}`);
+        }
+      } else {
+        try {
+          await grammyCtx.answerCallbackQuery({ text: "Denying..." });
+          if (p2pExt?.denyFriendRequest) {
+            await p2pExt.denyFriendRequest(parsed.from, pending.signature);
+          }
+          removePendingFriendRequest(parsed.from);
+          await sendMessage(botInstance, logger, chatId, `Friend request from <b>${parsed.from}</b> <b>denied</b>.`);
+          logger.info(`[telegram] Friend request from ${parsed.from} denied via button`);
+        } catch (err) {
+          logger.error(`[telegram] Failed to deny friend request from ${parsed.from}:`, err);
+          await sendMessage(botInstance, logger, chatId, `Failed to deny friend request: ${String(err)}`);
+        }
+      }
+      return;
+    }
+
 
     // Check authorization
     const user = grammyCtx.from;

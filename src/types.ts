@@ -16,6 +16,7 @@ export interface TelegramConfig {
   webhookPath?: string;
   webhookSecret?: string;
   ackReaction?: string;
+  ownerChatId?: string | number;
 }
 
 export interface SendOptions {

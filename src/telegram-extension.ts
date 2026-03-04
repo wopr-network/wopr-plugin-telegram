@@ -7,6 +7,12 @@
 
 import type { WOPRPluginContext } from "@wopr-network/plugin-types";
 import type { Bot } from "grammy";
+import {
+  buildFriendRequestKeyboard,
+  formatFriendRequestMessage,
+  setMessageIdOnPendingFriendRequest,
+  storePendingFriendRequest,
+} from "./friend-buttons.js";
 
 // ============================================================================
 // Structured return types for WebMCP-facing extension methods
@@ -32,6 +38,19 @@ export interface TelegramMessageStatsInfo {
 export interface TelegramExtension {
   getBotUsername: () => string;
 
+  /**
+   * Send a friend request notification to the bot owner via Telegram DM.
+   * Returns true if the notification was sent, false otherwise.
+   */
+  sendNotification: (
+    requestFrom: string,
+    pubkey: string,
+    encryptPub: string,
+    channelId: string,
+    channelName: string,
+    signature: string,
+  ) => Promise<boolean>;
+
   // Read-only WebMCP data methods
   getStatus: () => TelegramStatusInfo;
   listChats: () => TelegramChatInfo[];
@@ -47,9 +66,52 @@ export interface TelegramExtension {
 export function createTelegramExtension(
   getBot: () => Bot | null,
   getCtx: () => WOPRPluginContext | null,
+  getLogger?: () => import("winston").Logger,
 ): TelegramExtension {
   return {
     getBotUsername: () => getBot()?.botInfo?.username || "unknown",
+
+    sendNotification: async (
+      requestFrom: string,
+      pubkey: string,
+      encryptPub: string,
+      channelId: string,
+      channelName: string,
+      signature: string,
+    ): Promise<boolean> => {
+      const currentBot = getBot();
+      const currentCtx = getCtx();
+      if (!currentBot || !currentCtx) return false;
+
+      const config = currentCtx.getConfig<{ ownerChatId?: string | number }>();
+      if (!config.ownerChatId) {
+        getLogger?.()?.warn("No ownerChatId configured — friend request notification not sent");
+        return false;
+      }
+
+      const validationError = storePendingFriendRequest(requestFrom, pubkey, encryptPub, channelId, signature);
+      if (validationError) {
+        getLogger?.()?.warn(`Friend request rejected: invalid keys from ${requestFrom}: ${validationError}`);
+        return false;
+      }
+
+      try {
+        const text = formatFriendRequestMessage(requestFrom, pubkey, channelName);
+        const keyboard = buildFriendRequestKeyboard(requestFrom);
+        const sent = await currentBot.api.sendMessage(String(config.ownerChatId), text, {
+          parse_mode: "HTML",
+          reply_markup: keyboard,
+        });
+
+        setMessageIdOnPendingFriendRequest(requestFrom, sent.message_id);
+
+        getLogger?.()?.info(`Friend request notification sent to owner for request from ${requestFrom}`);
+        return true;
+      } catch (err) {
+        getLogger?.()?.error(`Failed to send friend request notification: ${String(err)}`);
+        return false;
+      }
+    },
 
     getStatus: (): TelegramStatusInfo => {
       const currentBot = getBot();
