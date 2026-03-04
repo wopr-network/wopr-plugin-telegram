@@ -89,21 +89,21 @@ export function createTelegramExtension(
         return false;
       }
 
-      const validationError = storePendingFriendRequest(requestFrom, pubkey, encryptPub, channelId, signature);
-      if (validationError) {
-        getLogger?.()?.warn(`Friend request rejected: invalid keys from ${requestFrom}: ${validationError}`);
+      const storeResult = storePendingFriendRequest(requestFrom, pubkey, encryptPub, channelId, signature);
+      if (typeof storeResult === "string") {
+        getLogger?.()?.warn(`Friend request rejected: invalid keys from ${requestFrom}: ${storeResult}`);
         return false;
       }
 
       try {
         const text = formatFriendRequestMessage(requestFrom, pubkey, channelName);
-        const keyboard = buildFriendRequestKeyboard(requestFrom);
+        const keyboard = buildFriendRequestKeyboard(storeResult.id);
         const sent = await currentBot.api.sendMessage(String(config.ownerChatId), text, {
           parse_mode: "HTML",
           reply_markup: keyboard,
         });
 
-        setMessageIdOnPendingFriendRequest(requestFrom, sent.message_id);
+        setMessageIdOnPendingFriendRequest(storeResult.id, sent.message_id);
 
         getLogger?.()?.info(`Friend request notification sent to owner for request from ${requestFrom}`);
         return true;

@@ -5,15 +5,15 @@
  * Sent as a DM to the bot owner when a p2p friend request arrives.
  */
 
+import crypto from "node:crypto";
 import { InlineKeyboard } from "grammy";
 
 // Align TTL with pairing code TTL (15 minutes)
 const BUTTON_REQUEST_TTL_MS = 15 * 60 * 1000;
 
-// Telegram callback_data max length is 64 bytes
-const TG_CALLBACK_DATA_MAX_LENGTH = 64;
-// "friend_accept:" = 14 chars (longest prefix)
-const MAX_USERNAME_IN_CALLBACK_DATA = TG_CALLBACK_DATA_MAX_LENGTH - "friend_accept:".length;
+// Request IDs are 8 random bytes (16 hex chars), well within Telegram's 64-byte
+// callback_data limit (64 - len("friend_accept:") = 50 chars available).
+const REQUEST_ID_BYTES = 8;
 
 export const FRIEND_CB_PREFIX = {
   ACCEPT: "friend_accept:",
@@ -24,6 +24,7 @@ export const FRIEND_CB_PREFIX = {
  * Pending friend request with button context
  */
 export interface PendingFriendRequest {
+  id: string;
   requestFrom: string;
   requestPubkey: string;
   encryptPub: string;
@@ -33,8 +34,15 @@ export interface PendingFriendRequest {
   signature: string;
 }
 
-// Store pending friend requests (keyed by lowercase requestFrom)
+// Store pending friend requests (keyed by stable random request ID)
 const pendingFriendRequests: Map<string, PendingFriendRequest> = new Map();
+
+/**
+ * Escape HTML special characters to prevent injection in Telegram HTML parse mode
+ */
+function escapeHtml(text: string): string {
+  return text.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
+}
 
 /**
  * Validate an Ed25519 public key (32 bytes, hex-encoded = 64 chars)
@@ -45,36 +53,26 @@ export function isValidEd25519Pubkey(pubkey: string): boolean {
 }
 
 /**
- * Truncate a username to fit within Telegram's 64-byte callback_data limit
+ * Build Accept/Deny inline keyboard for a friend request, keyed by stable request ID.
  */
-function truncateForCallbackData(username: string): string {
-  if (username.length <= MAX_USERNAME_IN_CALLBACK_DATA) {
-    return username;
-  }
-  return username.slice(0, MAX_USERNAME_IN_CALLBACK_DATA);
-}
-
-/**
- * Build Accept/Deny inline keyboard for a friend request
- */
-export function buildFriendRequestKeyboard(requestFrom: string): InlineKeyboard {
-  const truncatedFrom = truncateForCallbackData(requestFrom);
+export function buildFriendRequestKeyboard(requestId: string): InlineKeyboard {
   return new InlineKeyboard()
-    .text("✅ Accept", `${FRIEND_CB_PREFIX.ACCEPT}${truncatedFrom}`)
-    .text("❌ Deny", `${FRIEND_CB_PREFIX.DENY}${truncatedFrom}`);
+    .text("✅ Accept", `${FRIEND_CB_PREFIX.ACCEPT}${requestId}`)
+    .text("❌ Deny", `${FRIEND_CB_PREFIX.DENY}${requestId}`);
 }
 
 /**
- * Format a friend request notification message
+ * Format a friend request notification message.
+ * User-supplied strings are HTML-escaped to prevent injection.
  */
 export function formatFriendRequestMessage(requestFrom: string, pubkey: string, channelName: string): string {
   const pubkeyShort = `${pubkey.slice(0, 12)}...`;
   return [
     "<b>Friend Request Received</b>",
     "",
-    `<b>From:</b> @${requestFrom}`,
+    `<b>From:</b> @${escapeHtml(requestFrom)}`,
     `<b>Pubkey:</b> <code>${pubkeyShort}</code>`,
-    `<b>Channel:</b> ${channelName}`,
+    `<b>Channel:</b> ${escapeHtml(channelName)}`,
     "",
     "Click Accept to add as friend, Deny to ignore.",
   ].join("\n");
@@ -82,7 +80,8 @@ export function formatFriendRequestMessage(requestFrom: string, pubkey: string, 
 
 /**
  * Store a pending friend request after validating pubkey format.
- * Returns an error string if validation fails, undefined on success.
+ * Returns `{ id }` on success, or an error string if validation fails.
+ * Runs cleanup of expired requests before storing to keep the map bounded.
  */
 export function storePendingFriendRequest(
   requestFrom: string,
@@ -90,7 +89,7 @@ export function storePendingFriendRequest(
   encryptPub: string,
   channelId: string,
   signature: string,
-): string | undefined {
+): { id: string } | string {
   if (!isValidEd25519Pubkey(pubkey)) {
     return "Invalid public key format (expected 64-char hex Ed25519 key)";
   }
@@ -99,7 +98,12 @@ export function storePendingFriendRequest(
     return "Invalid encryption public key format";
   }
 
-  pendingFriendRequests.set(requestFrom.toLowerCase(), {
+  // Evict stale entries before adding a new one to keep the map bounded
+  cleanupExpiredFriendRequests();
+
+  const id = crypto.randomBytes(REQUEST_ID_BYTES).toString("hex");
+  pendingFriendRequests.set(id, {
+    id,
     requestFrom,
     requestPubkey: pubkey,
     encryptPub,
@@ -108,28 +112,37 @@ export function storePendingFriendRequest(
     signature,
   });
 
-  return undefined;
+  return { id };
 }
 
 /**
- * Get a pending friend request
+ * Get a pending friend request by its stable request ID.
+ * Returns undefined if not found or if the request has expired (and removes it).
  */
-export function getPendingFriendRequest(requestFrom: string): PendingFriendRequest | undefined {
-  return pendingFriendRequests.get(requestFrom.toLowerCase());
+export function getPendingFriendRequest(requestId: string): PendingFriendRequest | undefined {
+  const pending = pendingFriendRequests.get(requestId);
+  if (!pending) return undefined;
+
+  if (Date.now() - pending.timestamp > BUTTON_REQUEST_TTL_MS) {
+    pendingFriendRequests.delete(requestId);
+    return undefined;
+  }
+
+  return pending;
 }
 
 /**
- * Remove a pending friend request
+ * Remove a pending friend request by its stable request ID
  */
-export function removePendingFriendRequest(requestFrom: string): void {
-  pendingFriendRequests.delete(requestFrom.toLowerCase());
+export function removePendingFriendRequest(requestId: string): void {
+  pendingFriendRequests.delete(requestId);
 }
 
 /**
  * Bind a Telegram message ID to a pending friend request so we can verify provenance later
  */
-export function setMessageIdOnPendingFriendRequest(requestFrom: string, messageId: number): void {
-  const pending = pendingFriendRequests.get(requestFrom.toLowerCase());
+export function setMessageIdOnPendingFriendRequest(requestId: string, messageId: number): void {
+  const pending = pendingFriendRequests.get(requestId);
   if (pending) {
     pending.messageId = messageId;
   }
@@ -143,14 +156,15 @@ export function isFriendRequestCallback(data: string): boolean {
 }
 
 /**
- * Parse a friend request callback_data string
+ * Parse a friend request callback_data string.
+ * Returns `{ action, requestId }` where requestId is the stable random ID.
  */
-export function parseFriendRequestCallback(data: string): { action: "accept" | "deny"; from: string } | null {
+export function parseFriendRequestCallback(data: string): { action: "accept" | "deny"; requestId: string } | null {
   if (data.startsWith(FRIEND_CB_PREFIX.ACCEPT)) {
-    return { action: "accept", from: data.slice(FRIEND_CB_PREFIX.ACCEPT.length) };
+    return { action: "accept", requestId: data.slice(FRIEND_CB_PREFIX.ACCEPT.length) };
   }
   if (data.startsWith(FRIEND_CB_PREFIX.DENY)) {
-    return { action: "deny", from: data.slice(FRIEND_CB_PREFIX.DENY.length) };
+    return { action: "deny", requestId: data.slice(FRIEND_CB_PREFIX.DENY.length) };
   }
   return null;
 }

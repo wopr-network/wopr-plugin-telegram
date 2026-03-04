@@ -2,7 +2,27 @@
  * Tests for Telegram friend request button helpers.
  */
 
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
+
+// Mock grammy before importing modules that depend on it
+vi.mock("grammy", () => {
+  class InlineKeyboard {
+    private buttons: { text: string; callback_data: string }[][] = [[]];
+    text(label: string, data: string) {
+      this.buttons[this.buttons.length - 1].push({ text: label, callback_data: data });
+      return this;
+    }
+    row() {
+      this.buttons.push([]);
+      return this;
+    }
+    get inline_keyboard() {
+      return this.buttons.filter((r) => r.length > 0);
+    }
+  }
+  return { InlineKeyboard };
+});
+
 import {
   FRIEND_CB_PREFIX,
   buildFriendRequestKeyboard,
@@ -43,57 +63,81 @@ describe("isValidEd25519Pubkey", () => {
 });
 
 describe("storePendingFriendRequest", () => {
-  it("stores a valid request and returns undefined", () => {
-    const err = storePendingFriendRequest("alice", VALID_PUBKEY, VALID_ENCRYPT_PUB, "ch1", "sig1");
-    expect(err).toBeUndefined();
-    const pending = getPendingFriendRequest("alice");
+  it("stores a valid request and returns an id object", () => {
+    const result = storePendingFriendRequest("alice", VALID_PUBKEY, VALID_ENCRYPT_PUB, "ch1", "sig1");
+    expect(typeof result).toBe("object");
+    const { id } = result as { id: string };
+    expect(id).toBeDefined();
+    expect(typeof id).toBe("string");
+    const pending = getPendingFriendRequest(id);
     expect(pending).toBeDefined();
     expect(pending?.requestFrom).toBe("alice");
     expect(pending?.requestPubkey).toBe(VALID_PUBKEY);
-    removePendingFriendRequest("alice");
+    removePendingFriendRequest(id);
   });
 
   it("rejects invalid pubkey and returns error string", () => {
-    const err = storePendingFriendRequest("alice", "not-a-key", VALID_ENCRYPT_PUB, "ch1", "sig1");
-    expect(err).toMatch(/Invalid public key/);
-    expect(getPendingFriendRequest("alice")).toBeUndefined();
+    const result = storePendingFriendRequest("alice", "not-a-key", VALID_ENCRYPT_PUB, "ch1", "sig1");
+    expect(typeof result).toBe("string");
+    expect(result as string).toMatch(/Invalid public key/);
   });
 
   it("rejects invalid encryptPub and returns error string", () => {
-    const err = storePendingFriendRequest("alice", VALID_PUBKEY, "not-a-key", "ch1", "sig1");
-    expect(err).toMatch(/Invalid encryption public key/);
-    expect(getPendingFriendRequest("alice")).toBeUndefined();
+    const result = storePendingFriendRequest("alice", VALID_PUBKEY, "not-a-key", "ch1", "sig1");
+    expect(typeof result).toBe("string");
+    expect(result as string).toMatch(/Invalid encryption public key/);
   });
 
-  it("is case-insensitive for lookup", () => {
-    storePendingFriendRequest("Alice", VALID_PUBKEY, VALID_ENCRYPT_PUB, "ch1", "sig1");
-    expect(getPendingFriendRequest("alice")).toBeDefined();
-    expect(getPendingFriendRequest("ALICE")).toBeDefined();
-    removePendingFriendRequest("Alice");
+  it("generates a unique id for each request", () => {
+    const r1 = storePendingFriendRequest("alice", VALID_PUBKEY, VALID_ENCRYPT_PUB, "ch1", "sig1");
+    const r2 = storePendingFriendRequest("bob", VALID_PUBKEY, VALID_ENCRYPT_PUB, "ch2", "sig2");
+    expect(typeof r1).toBe("object");
+    expect(typeof r2).toBe("object");
+    const id1 = (r1 as { id: string }).id;
+    const id2 = (r2 as { id: string }).id;
+    expect(id1).not.toBe(id2);
+    removePendingFriendRequest(id1);
+    removePendingFriendRequest(id2);
+  });
+
+  it("allows multiple requests from the same username simultaneously", () => {
+    const r1 = storePendingFriendRequest("alice", VALID_PUBKEY, VALID_ENCRYPT_PUB, "ch1", "sig1");
+    const r2 = storePendingFriendRequest("alice", VALID_PUBKEY, VALID_ENCRYPT_PUB, "ch2", "sig2");
+    expect(typeof r1).toBe("object");
+    expect(typeof r2).toBe("object");
+    const id1 = (r1 as { id: string }).id;
+    const id2 = (r2 as { id: string }).id;
+    // Both requests should be independently accessible
+    expect(getPendingFriendRequest(id1)).toBeDefined();
+    expect(getPendingFriendRequest(id2)).toBeDefined();
+    removePendingFriendRequest(id1);
+    removePendingFriendRequest(id2);
   });
 });
 
 describe("setMessageIdOnPendingFriendRequest", () => {
   it("sets the message ID on a stored request", () => {
-    storePendingFriendRequest("bob", VALID_PUBKEY, VALID_ENCRYPT_PUB, "ch2", "sig2");
-    setMessageIdOnPendingFriendRequest("bob", 99);
-    const pending = getPendingFriendRequest("bob");
+    const result = storePendingFriendRequest("bob", VALID_PUBKEY, VALID_ENCRYPT_PUB, "ch2", "sig2");
+    expect(typeof result).toBe("object");
+    const { id } = result as { id: string };
+    setMessageIdOnPendingFriendRequest(id, 99);
+    const pending = getPendingFriendRequest(id);
     expect(pending?.messageId).toBe(99);
-    removePendingFriendRequest("bob");
+    removePendingFriendRequest(id);
   });
 
   it("does nothing when request does not exist", () => {
-    expect(() => setMessageIdOnPendingFriendRequest("nonexistent", 1)).not.toThrow();
+    expect(() => setMessageIdOnPendingFriendRequest("nonexistent-id", 1)).not.toThrow();
   });
 });
 
 describe("isFriendRequestCallback", () => {
   it("returns true for accept callback data", () => {
-    expect(isFriendRequestCallback(`${FRIEND_CB_PREFIX.ACCEPT}alice`)).toBe(true);
+    expect(isFriendRequestCallback(`${FRIEND_CB_PREFIX.ACCEPT}abc123`)).toBe(true);
   });
 
   it("returns true for deny callback data", () => {
-    expect(isFriendRequestCallback(`${FRIEND_CB_PREFIX.DENY}alice`)).toBe(true);
+    expect(isFriendRequestCallback(`${FRIEND_CB_PREFIX.DENY}abc123`)).toBe(true);
   });
 
   it("returns false for other callback data", () => {
@@ -105,13 +149,13 @@ describe("isFriendRequestCallback", () => {
 
 describe("parseFriendRequestCallback", () => {
   it("parses accept callback data", () => {
-    const result = parseFriendRequestCallback(`${FRIEND_CB_PREFIX.ACCEPT}alice`);
-    expect(result).toEqual({ action: "accept", from: "alice" });
+    const result = parseFriendRequestCallback(`${FRIEND_CB_PREFIX.ACCEPT}abc123`);
+    expect(result).toEqual({ action: "accept", requestId: "abc123" });
   });
 
   it("parses deny callback data", () => {
-    const result = parseFriendRequestCallback(`${FRIEND_CB_PREFIX.DENY}bob`);
-    expect(result).toEqual({ action: "deny", from: "bob" });
+    const result = parseFriendRequestCallback(`${FRIEND_CB_PREFIX.DENY}def456`);
+    expect(result).toEqual({ action: "deny", requestId: "def456" });
   });
 
   it("returns null for unrecognised data", () => {
@@ -121,25 +165,27 @@ describe("parseFriendRequestCallback", () => {
 });
 
 describe("buildFriendRequestKeyboard", () => {
-  it("builds a keyboard with Accept and Deny buttons", () => {
-    const kb = buildFriendRequestKeyboard("alice");
-    // InlineKeyboard has an `inline_keyboard` property that is an array of rows
+  it("builds a keyboard with Accept and Deny buttons for a request ID", () => {
+    const requestId = "abc1234567890def";
+    const kb = buildFriendRequestKeyboard(requestId);
     const rows = kb.inline_keyboard;
     expect(rows).toHaveLength(1);
     const buttons = rows[0];
     expect(buttons).toHaveLength(2);
     expect(buttons[0].text).toContain("Accept");
-    expect(buttons[0].callback_data).toBe(`${FRIEND_CB_PREFIX.ACCEPT}alice`);
+    expect(buttons[0].callback_data).toBe(`${FRIEND_CB_PREFIX.ACCEPT}${requestId}`);
     expect(buttons[1].text).toContain("Deny");
-    expect(buttons[1].callback_data).toBe(`${FRIEND_CB_PREFIX.DENY}alice`);
+    expect(buttons[1].callback_data).toBe(`${FRIEND_CB_PREFIX.DENY}${requestId}`);
   });
 
-  it("truncates long usernames to fit Telegram callback_data limit", () => {
-    const longUsername = "a".repeat(100);
-    const kb = buildFriendRequestKeyboard(longUsername);
-    const rows = kb.inline_keyboard;
-    const acceptButton = rows[0][0];
-    expect(acceptButton.callback_data!.length).toBeLessThanOrEqual(64);
+  it("callback_data from a stored request fits within Telegram's 64-byte limit", () => {
+    const result = storePendingFriendRequest("alice", VALID_PUBKEY, VALID_ENCRYPT_PUB, "ch1", "sig1");
+    const { id } = result as { id: string };
+    const kb = buildFriendRequestKeyboard(id);
+    for (const button of kb.inline_keyboard[0]) {
+      expect(button.callback_data!.length).toBeLessThanOrEqual(64);
+    }
+    removePendingFriendRequest(id);
   });
 });
 
@@ -150,6 +196,19 @@ describe("formatFriendRequestMessage", () => {
     expect(msg).toContain("aaaaaaaaaaaa...");
     expect(msg).toContain("my-channel");
     expect(msg).toContain("Friend Request Received");
+  });
+
+  it("HTML-escapes special characters in requestFrom and channelName", () => {
+    const msg = formatFriendRequestMessage("<script>", VALID_PUBKEY, "<b>chan</b>");
+    expect(msg).not.toContain("<script>");
+    expect(msg).toContain("&lt;script&gt;");
+    expect(msg).not.toContain("<b>chan</b>");
+    expect(msg).toContain("&lt;b&gt;chan&lt;/b&gt;");
+  });
+
+  it("HTML-escapes ampersands in requestFrom", () => {
+    const msg = formatFriendRequestMessage("alice&bob", VALID_PUBKEY, "chan");
+    expect(msg).toContain("alice&amp;bob");
   });
 });
 

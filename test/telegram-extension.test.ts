@@ -6,6 +6,26 @@
  */
 
 import { describe, expect, it, vi } from "vitest";
+
+// Mock grammy before importing modules that depend on it
+vi.mock("grammy", () => {
+  class InlineKeyboard {
+    private buttons: { text: string; callback_data: string }[][] = [[]];
+    text(label: string, data: string) {
+      this.buttons[this.buttons.length - 1].push({ text: label, callback_data: data });
+      return this;
+    }
+    row() {
+      this.buttons.push([]);
+      return this;
+    }
+    get inline_keyboard() {
+      return this.buttons.filter((r) => r.length > 0);
+    }
+  }
+  return { InlineKeyboard };
+});
+
 import { createTelegramExtension } from "../src/telegram-extension.js";
 import type { WOPRPluginContext } from "@wopr-network/plugin-types";
 
