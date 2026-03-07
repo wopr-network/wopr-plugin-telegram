@@ -26,7 +26,7 @@ importers:
         version: 2.4.4
       '@grammyjs/types':
         specifier: ^3.24.0
-        version: 3.24.0
+        version: 3.25.0
       '@types/node':
         specifier: ^25.3.0
         version: 25.3.2
@@ -263,6 +263,9 @@ packages:
 
   '@grammyjs/types@3.24.0':
     resolution: {integrity: sha512-qQIEs4lN5WqUdr4aT8MeU6UFpMbGYAvcvYSW1A4OO1PABGJQHz/KLON6qvpf+5RxaNDQBxiY2k2otIhg/AG7RQ==}
+
+  '@grammyjs/types@3.25.0':
+    resolution: {integrity: sha512-iN9i5p+8ZOu9OMxWNcguojQfz4K/PDyMPOnL7PPCON+SoA/F8OKMH3uR7CVUkYfdNe0GCz8QOzAWrnqusQYFOg==}
 
   '@jridgewell/sourcemap-codec@1.5.5':
     resolution: {integrity: sha512-cYQ9310grqxueWbl+WuIUIaiUaDcj7WOq5fVhEljNVgRfOUhY9fy2zTvfoqWsnebh8Sl70VScFbICvJnLKB0Og==}
@@ -885,6 +888,8 @@ snapshots:
       - supports-color
 
   '@grammyjs/types@3.24.0': {}
+
+  '@grammyjs/types@3.25.0': {}
 
   '@jridgewell/sourcemap-codec@1.5.5': {}
 
