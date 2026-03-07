@@ -240,7 +240,6 @@ export function registerCallbackHandlers(
       return;
     }
 
-
     // Check authorization
     const user = grammyCtx.from;
     const chat = grammyCtx.callbackQuery.message?.chat;
