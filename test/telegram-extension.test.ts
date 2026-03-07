@@ -5,7 +5,27 @@
  * and correct session filtering for Telegram-specific sessions.
  */
 
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
+
+// Mock grammy before importing modules that depend on it
+vi.mock("grammy", () => {
+  class InlineKeyboard {
+    private buttons: { text: string; callback_data: string }[][] = [[]];
+    text(label: string, data: string) {
+      this.buttons[this.buttons.length - 1].push({ text: label, callback_data: data });
+      return this;
+    }
+    row() {
+      this.buttons.push([]);
+      return this;
+    }
+    get inline_keyboard() {
+      return this.buttons.filter((r) => r.length > 0);
+    }
+  }
+  return { InlineKeyboard };
+});
+
 import { createTelegramExtension } from "../src/telegram-extension.js";
 import type { WOPRPluginContext } from "@wopr-network/plugin-types";
 
@@ -26,11 +46,20 @@ function createMockBot(options: { username?: string; hasBotInfo?: boolean } = {}
   };
 }
 
-function createMockCtx(sessions: string[] = []): WOPRPluginContext {
+function createMockCtx(sessions: string[] = [], config: Record<string, unknown> = {}): WOPRPluginContext {
   return {
     getSessions: () => sessions,
-    getConfig: () => ({}),
+    getConfig: () => config,
   } as unknown as WOPRPluginContext;
+}
+
+function createMockBotWithApi(sendMessageFn?: (...args: unknown[]) => unknown): any {
+  return {
+    botInfo: { id: 1, is_bot: true, first_name: "TestBot", username: "wopr_test_bot" },
+    api: {
+      sendMessage: sendMessageFn ?? vi.fn().mockResolvedValue({ message_id: 42 }),
+    },
+  };
 }
 
 describe("TelegramExtension", () => {
@@ -181,6 +210,72 @@ describe("TelegramExtension", () => {
       );
       const stats = ext.getMessageStats();
       expect(stats).toEqual({ sessionsActive: 0, activeConversations: 0 });
+    });
+  });
+
+  describe("sendNotification", () => {
+    const VALID_PUBKEY = "a".repeat(64);
+    const VALID_ENCRYPT_PUB = "b".repeat(64);
+
+    it("returns false when bot is null", async () => {
+      const ext = createTelegramExtension(
+        () => null,
+        () => createMockCtx([], { ownerChatId: "123" }),
+      );
+      const result = await ext.sendNotification("alice", VALID_PUBKEY, VALID_ENCRYPT_PUB, "ch1", "chan", "sig");
+      expect(result).toBe(false);
+    });
+
+    it("returns false when ctx is null", async () => {
+      const ext = createTelegramExtension(
+        () => createMockBotWithApi(),
+        () => null,
+      );
+      const result = await ext.sendNotification("alice", VALID_PUBKEY, VALID_ENCRYPT_PUB, "ch1", "chan", "sig");
+      expect(result).toBe(false);
+    });
+
+    it("returns false when ownerChatId is not configured", async () => {
+      const ext = createTelegramExtension(
+        () => createMockBotWithApi(),
+        () => createMockCtx([], {}),
+      );
+      const result = await ext.sendNotification("alice", VALID_PUBKEY, VALID_ENCRYPT_PUB, "ch1", "chan", "sig");
+      expect(result).toBe(false);
+    });
+
+    it("returns false when pubkey is invalid", async () => {
+      const ext = createTelegramExtension(
+        () => createMockBotWithApi(),
+        () => createMockCtx([], { ownerChatId: "123" }),
+      );
+      const result = await ext.sendNotification("alice", "not-a-key", VALID_ENCRYPT_PUB, "ch1", "chan", "sig");
+      expect(result).toBe(false);
+    });
+
+    it("sends a message to ownerChatId and returns true on success", async () => {
+      const sendMessageMock = vi.fn().mockResolvedValue({ message_id: 99 });
+      const ext = createTelegramExtension(
+        () => createMockBotWithApi(sendMessageMock),
+        () => createMockCtx([], { ownerChatId: "555" }),
+      );
+      const result = await ext.sendNotification("alice", VALID_PUBKEY, VALID_ENCRYPT_PUB, "ch1", "my-channel", "sig");
+      expect(result).toBe(true);
+      expect(sendMessageMock).toHaveBeenCalledOnce();
+      const [chatId, text] = sendMessageMock.mock.calls[0];
+      expect(chatId).toBe("555");
+      expect(text).toContain("alice");
+      expect(text).toContain("my-channel");
+    });
+
+    it("returns false when bot.api.sendMessage throws", async () => {
+      const sendMessageMock = vi.fn().mockRejectedValue(new Error("Network error"));
+      const ext = createTelegramExtension(
+        () => createMockBotWithApi(sendMessageMock),
+        () => createMockCtx([], { ownerChatId: "555" }),
+      );
+      const result = await ext.sendNotification("alice", VALID_PUBKEY, VALID_ENCRYPT_PUB, "ch1", "chan", "sig");
+      expect(result).toBe(false);
     });
   });
 });

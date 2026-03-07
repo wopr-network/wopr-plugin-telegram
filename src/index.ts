@@ -170,6 +170,14 @@ const configSchema: ConfigSchema = {
         "Emoji reaction sent on incoming messages to acknowledge receipt (must be a standard Telegram reaction emoji)",
       setupFlow: "none",
     },
+    {
+      name: "ownerChatId",
+      type: "text",
+      label: "Owner Chat ID",
+      placeholder: "123456789",
+      description: "Telegram chat ID of the bot owner. Required for p2p friend request notifications.",
+      setupFlow: "none",
+    },
   ],
 };
 
@@ -410,6 +418,7 @@ const plugin: WOPRPlugin = {
       const extension = createTelegramExtension(
         () => bot,
         () => ctx,
+        () => logger,
       );
       ctx.registerExtension("telegram", extension);
       logger.info("Registered Telegram extension");
@@ -492,6 +501,19 @@ export {
   sendPhoto,
   validateTokenFilePath,
 } from "./attachments.js";
+export type { PendingFriendRequest } from "./friend-buttons.js";
+export {
+  buildFriendRequestKeyboard,
+  cleanupExpiredFriendRequests,
+  formatFriendRequestMessage,
+  getPendingFriendRequest,
+  isFriendRequestCallback,
+  isValidEd25519Pubkey,
+  parseFriendRequestCallback,
+  removePendingFriendRequest,
+  setMessageIdOnPendingFriendRequest,
+  storePendingFriendRequest,
+} from "./friend-buttons.js";
 export { isStandardReaction, STANDARD_REACTIONS } from "./reactions.js";
 export { telegramChannelProvider };
 export {
