@@ -10,13 +10,13 @@ importers:
     dependencies:
       '@grammyjs/auto-retry':
         specifier: ^2.0.2
-        version: 2.0.2(grammy@1.40.1)
+        version: 2.0.2(grammy@1.41.1)
       '@wopr-network/plugin-types':
         specifier: ^0.2.0
         version: 0.2.1(zod@3.25.76)
       grammy:
         specifier: ^1.40.0
-        version: 1.40.1
+        version: 1.41.1
       winston:
         specifier: ^3.11.0
         version: 3.19.0
@@ -532,8 +532,8 @@ packages:
     engines: {node: ^8.16.0 || ^10.6.0 || >=11.0.0}
     os: [darwin]
 
-  grammy@1.40.1:
-    resolution: {integrity: sha512-bTe8SWXD8/Sdt2LGAAAsFGhuxI9RG8zL2gGk3V42A/RxriPqBQqwMGoNSldNK1qIFD2EaVuq7NQM8+ZAmNgHLw==}
+  grammy@1.41.1:
+    resolution: {integrity: sha512-wcHAQ1e7svL3fJMpDchcQVcWUmywhuepOOjHUHmMmWAwUJEIyK5ea5sbSjZd+Gy1aMpZeP8VYJa+4tP+j1YptQ==}
     engines: {node: ^12.20.0 || >=14.13.1}
 
   inherits@2.0.4:
@@ -880,10 +880,10 @@ snapshots:
   '@esbuild/win32-x64@0.27.3':
     optional: true
 
-  '@grammyjs/auto-retry@2.0.2(grammy@1.40.1)':
+  '@grammyjs/auto-retry@2.0.2(grammy@1.41.1)':
     dependencies:
       debug: 4.4.3
-      grammy: 1.40.1
+      grammy: 1.41.1
     transitivePeerDependencies:
       - supports-color
 
@@ -1114,9 +1114,9 @@ snapshots:
   fsevents@2.3.3:
     optional: true
 
-  grammy@1.40.1:
+  grammy@1.41.1:
     dependencies:
-      '@grammyjs/types': 3.24.0
+      '@grammyjs/types': 3.25.0
       abort-controller: 3.0.0
       debug: 4.4.3
       node-fetch: 2.7.0
