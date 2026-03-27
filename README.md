@@ -1,3 +1,11 @@
+# ⚠️ This package has moved
+
+This package is now maintained in the [wopr-plugins monorepo](https://github.com/wopr-network/wopr-plugins/tree/main/packages/plugin-telegram).
+
+This repository is archived and no longer accepts contributions.
+
+---
+
 # wopr-plugin-telegram
 
 [![npm version](https://img.shields.io/npm/v/wopr-plugin-telegram.svg)](https://www.npmjs.com/package/wopr-plugin-telegram)
